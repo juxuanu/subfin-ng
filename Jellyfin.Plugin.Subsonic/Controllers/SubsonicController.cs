@@ -690,22 +690,35 @@ public class SubsonicController : ControllerBase
             cacheKey, TtlMs,
             build: () =>
             {
-                var genreResult = _library.GetGenres(new InternalItemsQuery(user));
+                // Use GetMusicGenres (MusicGenre entity population), NOT GetGenres —
+                // GetGenres returns the general Genre population dominated by movie/TV
+                // genres, which no audio track carries (see github issue #1).
+                var genreQuery = new InternalItemsQuery(user)
+                {
+                    IncludeItemTypes = [BaseItemKind.Audio, BaseItemKind.MusicAlbum],
+                    Recursive = true,
+                };
+                ApplyFolderScoping(genreQuery, folderIds);
+                var genreResult = _library.GetMusicGenres(genreQuery);
                 return genreResult.Items.Select(g =>
                 {
                     var name = g.Item1.Name ?? "";
-                    var songCount = _library.GetCount(new InternalItemsQuery(user)
+                    var songQuery = new InternalItemsQuery(user)
                     {
                         Genres = new List<string> { name },
                         IncludeItemTypes = [BaseItemKind.Audio],
                         Recursive = true,
-                    });
-                    var albumCount = _library.GetCount(new InternalItemsQuery(user)
+                    };
+                    ApplyFolderScoping(songQuery, folderIds);
+                    var songCount = _library.GetCount(songQuery);
+                    var albumQuery = new InternalItemsQuery(user)
                     {
                         Genres = new List<string> { name },
                         IncludeItemTypes = [BaseItemKind.MusicAlbum],
                         Recursive = true,
-                    });
+                    };
+                    ApplyFolderScoping(albumQuery, folderIds);
+                    var albumCount = _library.GetCount(albumQuery);
                     return new GenreCacheEntry(name, songCount, albumCount);
                 }).ToList();
             },
