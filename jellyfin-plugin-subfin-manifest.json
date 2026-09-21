@@ -9,6 +9,14 @@
     "owner": "williamkray",
     "versions": [
       {
+        "checksum": "28c67b8da76983c54a23ccd99376c77d",
+        "changelog": "0d0d6bc chore: drop obsolete publish.sh from gitignore (releases via GitHub Actions)\n900c7ca feat: create shares from the web UI with search, tabbed layout\n03d54dc chore: untrack local dev/validation scripts\nddedc63 fix: use GetMusicGenres so getGenres returns music genres (resolves #1)\n16e517e chore: ignore publish.sh (contains private server config)\n1ee4ce3 release: update manifest for v10.11.5.4 [skip ci]\n3c080dc release: bump to v10.11.5.4\n520103c Initial commit: Subfin Jellyfin plugin v10.11.5.3",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/williamkray/subfin-plugin/releases/download/v10.11.5.7/jellyfin-plugin-subfin_10.11.5.7.zip",
+        "timestamp": "2026-09-21T21:47:41Z",
+        "version": "10.11.5.7"
+      },
+      {
         "checksum": "e8f301b7034020dff0f41299d985767d",
         "changelog": "d7ad501 release: bump to v10.11.5.4\n5276305 Initial commit: Subfin Jellyfin plugin v10.11.5.3",
         "targetAbi": "10.11.0.0",
