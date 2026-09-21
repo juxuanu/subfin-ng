@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Data.Sqlite;
@@ -214,6 +215,35 @@ public static class SubsonicStore
             cmd.Parameters.AddWithValue("@id", id);
             cmd.ExecuteNonQuery();
         }
+    }
+
+    /// <summary>
+    /// Sentinel stored in linked_devices.jellyfin_device_id to mark the hidden
+    /// per-user pseudo-device that owns shares created from the /subfin web UI.
+    /// </summary>
+    public const string WebShareDeviceSentinel = "__subfin_web__";
+
+    /// <summary>
+    /// Returns the id of the hidden pseudo-device that owns this user's web-created
+    /// shares, creating it on first use. The share/device model requires every share
+    /// to reference a linked device; this device has no real client and is filtered
+    /// out of the device list UI. Its subsonic_username matches the Jellyfin username
+    /// so GetSharesForUser resolves web shares alongside any real device shares.
+    /// </summary>
+    public static long GetOrCreateWebShareDevice(string subsonicUsername, string jellyfinUserId)
+    {
+        lock (_lock)
+        {
+            using var sel = Db.CreateCommand();
+            sel.CommandText = "SELECT id FROM linked_devices WHERE jellyfin_user_id = @jid AND jellyfin_device_id = @sentinel LIMIT 1";
+            sel.Parameters.AddWithValue("@jid", jellyfinUserId);
+            sel.Parameters.AddWithValue("@sentinel", WebShareDeviceSentinel);
+            if (sel.ExecuteScalar() is long existing) return existing;
+        }
+        // No pseudo-device yet — create one with a random, never-shown password.
+        var password = Convert.ToBase64String(RandomNumberGenerator.GetBytes(18))
+            .Replace("+", "a").Replace("/", "b").Replace("=", "c");
+        return InsertDevice(subsonicUsername, jellyfinUserId, password, "Subfin Web", WebShareDeviceSentinel, "Subfin Web");
     }
 
     // ── Token auth helpers ───────────────────────────────────────────────────

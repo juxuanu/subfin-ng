@@ -282,42 +282,7 @@ public class SubsonicController : ControllerBase
         => _artistKeyRegex.Replace(name.ToLowerInvariant(), "");
 
     private List<(string Id, string Name, int AlbumCount)> BuildArtistList(User user, List<string>? folderIds)
-    {
-        var albumQuery = new InternalItemsQuery(user)
-        {
-            IncludeItemTypes = [BaseItemKind.MusicAlbum],
-            Recursive = true,
-        };
-        ApplyFolderScoping(albumQuery, folderIds);
-
-        var allAlbums = _library.GetItemList(albumQuery).OfType<MusicAlbum>();
-
-        // Use _library.GetArtist(name) — the same resolver Jellyfin uses when building
-        // album DTOs — so the entity ID we return for each artist is always the one that
-        // AlbumArtistIds queries will match. album.MusicArtist?.Id is unreliable because
-        // it comes from the folder-hierarchy nav property and may point to a normalized
-        // entity (e.g. "_NSYNC") that doesn't match the tag-based "ItemValues" index
-        // (which stores "*NSYNC"), causing getArtist to return 0 albums.
-        var byKey = new Dictionary<string, (string Id, string Name, int Count)>(StringComparer.OrdinalIgnoreCase);
-        foreach (var album in allAlbums)
-        {
-            var artistName = album.AlbumArtist ?? album.AlbumArtists.FirstOrDefault() ?? "";
-            if (string.IsNullOrEmpty(artistName)) continue;
-
-            var key = CanonicalArtistKey(artistName);
-            if (byKey.TryGetValue(key, out var existing))
-            {
-                byKey[key] = existing with { Count = existing.Count + 1 };
-                continue;
-            }
-
-            var artistEntity = _library.GetArtist(artistName);
-            if (artistEntity == null) continue;
-
-            byKey[key] = (artistEntity.Id.ToString("N"), artistName, 1);
-        }
-        return byKey.Values.Select(v => (v.Id, v.Name, v.Count)).OrderBy(v => v.Name).ToList();
-    }
+        => LibraryQueries.BuildArtistList(_library, user, folderIds);
 
     private static List<(string Letter, List<(string Id, string Name, int AlbumCount)> Artists)> GroupByLetter(
         IEnumerable<(string Id, string Name, int AlbumCount)> artists)
@@ -1128,74 +1093,7 @@ public class SubsonicController : ControllerBase
 
         // Expand IDs to a flat list of audio track GUIDs.
         // Artist IDs are bare GUIDs; album IDs use al- prefix; playlist IDs use pl- prefix.
-        var seen = new HashSet<string>();
-        var flatIds = new List<string>();
-        foreach (var id in ids)
-        {
-            if (id.StartsWith("al-", StringComparison.Ordinal))
-            {
-                if (!Guid.TryParse(id.Substring(3), out var albumGuid)) continue;
-                var tracks = _library.GetItemList(new InternalItemsQuery(user)
-                {
-                    ParentId = albumGuid,
-                    IncludeItemTypes = [BaseItemKind.Audio],
-                }).OfType<Audio>().ToList();
-                foreach (var t in tracks)
-                    if (seen.Add(t.Id.ToString("N"))) flatIds.Add(t.Id.ToString("N"));
-            }
-            else if (id.StartsWith("pl-", StringComparison.Ordinal))
-            {
-                if (!Guid.TryParse(id.Substring(3), out var plGuid)) continue;
-                var pl = _library.GetItemById<Playlist>(plGuid);
-                if (pl == null) continue;
-                foreach (var lc in pl.LinkedChildren ?? Array.Empty<LinkedChild>())
-                {
-                    if (!lc.ItemId.HasValue) continue;
-                    var tId = lc.ItemId.Value.ToString("N");
-                    if (seen.Add(tId)) flatIds.Add(tId);
-                }
-            }
-            else
-            {
-                // Bare GUID — resolve item type to handle artist, album, or track
-                if (!Guid.TryParse(ItemMapper.StripPrefix(id), out var guid)) continue;
-                var item = _library.GetItemById(guid);
-                if (item is MusicArtist artistItem)
-                {
-                    var albums = _library.GetItemList(new InternalItemsQuery(user)
-                    {
-                        IncludeItemTypes = [BaseItemKind.MusicAlbum],
-                        AlbumArtistIds = [artistItem.Id],
-                        Recursive = true
-                    }).OfType<MusicAlbum>().ToList();
-                    foreach (var album in albums)
-                    {
-                        var tracks = _library.GetItemList(new InternalItemsQuery(user)
-                        {
-                            ParentId = album.Id,
-                            IncludeItemTypes = [BaseItemKind.Audio],
-                        }).OfType<Audio>().ToList();
-                        foreach (var t in tracks)
-                            if (seen.Add(t.Id.ToString("N"))) flatIds.Add(t.Id.ToString("N"));
-                    }
-                }
-                else if (item is MusicAlbum albumItem)
-                {
-                    var tracks = _library.GetItemList(new InternalItemsQuery(user)
-                    {
-                        ParentId = albumItem.Id,
-                        IncludeItemTypes = [BaseItemKind.Audio],
-                    }).OfType<Audio>().ToList();
-                    foreach (var t in tracks)
-                        if (seen.Add(t.Id.ToString("N"))) flatIds.Add(t.Id.ToString("N"));
-                }
-                else
-                {
-                    var tId = guid.ToString("N");
-                    if (seen.Add(tId)) flatIds.Add(tId);
-                }
-            }
-        }
+        var flatIds = LibraryQueries.ExpandShareIds(_library, user, ids);
 
         var secret = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24))
             .Replace("+", "-").Replace("/", "_").Replace("=", "");

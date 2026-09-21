@@ -13,8 +13,10 @@ using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.Subsonic.Mappers;
 using Jellyfin.Plugin.Subsonic.Store;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Playlists;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -117,7 +119,8 @@ public class WebController : ControllerBase
     {
         var (user, err) = ResolveUser();
         if (user == null) return err!;
-        var devices = SubsonicStore.GetDevicesByJellyfinUserId(user.Id.ToString("N"));
+        var devices = SubsonicStore.GetDevicesByJellyfinUserId(user.Id.ToString("N"))
+            .Where(d => d.JellyfinDeviceId != SubsonicStore.WebShareDeviceSentinel);
         return Ok(devices.Select(d => new { d.Id, d.DeviceLabel, d.SubsonicUsername, d.CreatedAt }));
     }
 
@@ -218,6 +221,109 @@ public class WebController : ControllerBase
                 url = $"{baseUrl}/subfin/share/{s.ShareUid}?secret={Uri.EscapeDataString(secret)}",
             };
         }));
+    }
+
+    // ── API: create share (search + create) ──────────────────────────────────
+
+    /// <summary>
+    /// Searches the current user's libraries for artists, albums, songs and playlists.
+    /// Returns Subsonic-prefixed IDs (ar-/al-/pl-/bare track) ready to pass to
+    /// POST api/shares. Substring match, library-scoped like the Subsonic search3.
+    /// </summary>
+    [HttpGet("api/search")]
+    [Authorize(AuthenticationSchemes = "CustomAuthentication")]
+    public IActionResult Search([FromQuery] string? query, [FromQuery] int count = 20)
+    {
+        if (SubsonicPlugin.Instance?.Configuration?.SharingEnabled == false) return NotFound();
+        var (user, err) = ResolveUser();
+        if (user == null) return err!;
+
+        var q = (query ?? "").Trim();
+        if (q.Length == 0)
+            return Ok(new { artists = Array.Empty<object>(), albums = Array.Empty<object>(), songs = Array.Empty<object>(), playlists = Array.Empty<object>() });
+
+        count = Math.Clamp(count, 1, 50);
+        var folderIds = EffectiveFolderIds(user.Username);
+
+        // Artists: reuse the cached tag-entity index (same key search3/getIndexes populate)
+        // so IDs work with AlbumArtistIds; fall back to building it fresh on a cache miss.
+        var cacheKey = $"artistIndex:{user.Id:N}:{(folderIds == null ? "all" : string.Join(",", folderIds.OrderBy(x => x)))}";
+        var cached = SubsonicStore.GetDerivedCache(cacheKey);
+        IEnumerable<(string Id, string Name, int AlbumCount)> artistIndex = cached != null
+            ? (JsonSerializer.Deserialize<List<ArtistIndexEntry>>(cached.ValueJson) ?? []).Select(a => (a.Id, a.Name, a.AlbumCount))
+            : LibraryQueries.BuildArtistList(_library, user, folderIds);
+
+        var artists = artistIndex
+            .Where(a => a.Name.Contains(q, StringComparison.OrdinalIgnoreCase))
+            .Take(count)
+            .Select(a => new { id = $"ar-{a.Id}", name = a.Name, albumCount = a.AlbumCount })
+            .ToList();
+
+        var albumQuery = new InternalItemsQuery(user)
+        { SearchTerm = q, IncludeItemTypes = [BaseItemKind.MusicAlbum], Limit = count, Recursive = true };
+        if (folderIds != null) albumQuery.AncestorIds = folderIds.Select(Guid.Parse).ToArray();
+        var albums = _library.GetItemList(albumQuery).OfType<MusicAlbum>()
+            .Select(a => new
+            {
+                id = $"al-{a.Id:N}",
+                name = a.Name ?? "",
+                artist = a.AlbumArtist ?? a.AlbumArtists.FirstOrDefault() ?? "",
+                year = a.ProductionYear,
+            }).ToList();
+
+        var songQuery = new InternalItemsQuery(user)
+        { SearchTerm = q, IncludeItemTypes = [BaseItemKind.Audio], Limit = count, Recursive = true };
+        if (folderIds != null) songQuery.AncestorIds = folderIds.Select(Guid.Parse).ToArray();
+        var songs = _library.GetItemList(songQuery).OfType<Audio>()
+            .Select(s => new
+            {
+                id = s.Id.ToString("N"),
+                title = s.Name ?? "",
+                artist = s.AlbumArtists.FirstOrDefault() ?? s.Artists.FirstOrDefault() ?? "",
+                album = s.Album ?? "",
+            }).ToList();
+
+        var playlists = _library.GetItemList(new InternalItemsQuery(user)
+        { IncludeItemTypes = [BaseItemKind.Playlist], Recursive = true }).OfType<Playlist>()
+            .Where(pl => (pl.Name ?? "").Contains(q, StringComparison.OrdinalIgnoreCase))
+            .Take(count)
+            .Select(pl => new { id = $"pl-{pl.Id:N}", name = pl.Name ?? "", songCount = pl.LinkedChildren?.Length ?? 0 })
+            .ToList();
+
+        return Ok(new { artists, albums, songs, playlists });
+    }
+
+    /// <summary>
+    /// Creates a share from selected search-result IDs. The share is owned by a hidden
+    /// per-user pseudo-device (see SubsonicStore.GetOrCreateWebShareDevice) so it appears
+    /// in the user's share list without requiring a real linked Subsonic client.
+    /// </summary>
+    [HttpPost("api/shares")]
+    [Authorize(AuthenticationSchemes = "CustomAuthentication")]
+    public IActionResult CreateShare([FromBody] CreateShareRequest req)
+    {
+        if (SubsonicPlugin.Instance?.Configuration?.SharingEnabled == false) return NotFound();
+        var (user, err) = ResolveUser();
+        if (user == null) return err!;
+
+        var ids = (req.Ids ?? []).Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToList();
+        if (ids.Count == 0) return BadRequest("No items selected.");
+
+        var flat = LibraryQueries.ExpandShareIds(_library, user, ids);
+        if (flat.Count == 0) return BadRequest("Selected items contain no playable tracks.");
+
+        string? expiresAt = null;
+        if (!string.IsNullOrEmpty(req.Expires) && long.TryParse(req.Expires, out var ms) && ms > 0)
+            expiresAt = DateTimeOffset.FromUnixTimeMilliseconds(ms).ToString("o");
+
+        var desc = string.IsNullOrWhiteSpace(req.Description) ? null : req.Description.Trim();
+        var deviceId = SubsonicStore.GetOrCreateWebShareDevice(user.Username, user.Id.ToString("N"));
+        var secret = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24)).Replace("+", "-").Replace("/", "_").Replace("=", "");
+        var uid = SubsonicStore.InsertShare(deviceId, ids, flat, desc, expiresAt, secret);
+
+        var baseUrl = $"{Request.Scheme}://{Request.Host}";
+        var url = $"{baseUrl}/subfin/share/{uid}?secret={Uri.EscapeDataString(secret)}";
+        return Ok(new { uid, url, description = desc, expires = expiresAt, songCount = flat.Count });
     }
 
     [HttpDelete("api/shares/{uid}")]
@@ -452,6 +558,13 @@ public class WebController : ControllerBase
         return user == null ? (null, Unauthorized()) : (user, null);
     }
 
+    /// <summary>Resolve the user's saved library folder selection, or null for no restriction.</summary>
+    private static List<string>? EffectiveFolderIds(string subsonicUsername)
+    {
+        var saved = SubsonicStore.GetUserLibrarySettings(subsonicUsername);
+        return saved.Count == 0 ? null : saved;
+    }
+
     /// <summary>Returns true if the device with the given id belongs to the given user.</summary>
     private static bool OwnedBy(long deviceId, User user)
     {
@@ -481,3 +594,7 @@ public record QuickConnectStartRequest(string SubsonicUsername);
 public record QuickConnectCompleteRequest(string Secret, string SubsonicUsername, string? DeviceLabel);
 public record SetLibrariesRequest(string Username, List<string>? SelectedIds);
 public record RenameShareRequest(string? Description);
+public record CreateShareRequest(List<string>? Ids, string? Description, string? Expires);
+
+/// <summary>Shape of a cached artist-index entry (mirrors SubsonicController's ArtistCacheEntry).</summary>
+public record ArtistIndexEntry(string Id, string Name, int AlbumCount);

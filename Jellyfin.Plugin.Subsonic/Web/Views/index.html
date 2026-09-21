@@ -8,14 +8,9 @@
     body { font-family: system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; color: #eee; background: #1a1a1a; }
     h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
     .subtitle { color: #888; font-size: 0.9rem; margin-bottom: 0.6rem; }
-    .page-nav { font-size: 0.82rem; margin-bottom: 1.2rem; display: flex; gap: 1rem; flex-wrap: wrap; }
-    .page-nav a { color: #5ab0ff; text-decoration: none; }
-    .page-nav a:hover { text-decoration: underline; }
     .card { border: 1px solid #444; border-radius: 8px; padding: 1rem 1.25rem; margin: 1rem 0; background: #252525; }
     .h2-row { display: flex; align-items: baseline; justify-content: space-between; margin: 0 0 0.75rem; }
     h2 { font-size: 1rem; margin: 0; }
-    .top-link { font-size: 0.75rem; color: #666; text-decoration: none; }
-    .top-link:hover { color: #5ab0ff; }
     label { display: block; font-size: 0.875rem; color: #aaa; margin-bottom: 0.2rem; }
     input[type=text] { display: block; width: 100%; box-sizing: border-box; padding: 0.4rem 0.6rem; background: #333; color: #eee; border: 1px solid #555; border-radius: 4px; margin-bottom: 0.75rem; }
     .btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
@@ -54,23 +49,46 @@
     .share-meta { font-size: 0.78rem; color: #888; margin-top: 0.1rem; }
     .share-url  { font-size: 0.78rem; color: #5ab0ff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
     .rename-input { width: 100%; box-sizing: border-box; padding: 0.25rem 0.4rem; background: #333; color: #eee; border: 1px solid #555; border-radius: 4px; font-size: 0.875rem; margin-bottom: 0.3rem; }
+    .search-row { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .search-row input[type=text] { margin-bottom: 0; }
+    input[type=datetime-local] { display: block; width: 100%; box-sizing: border-box; padding: 0.4rem 0.6rem; background: #333; color: #eee; border: 1px solid #555; border-radius: 4px; margin-bottom: 0.75rem; }
+    .selected-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.25rem 0 0.75rem; }
+    .chip { display: inline-flex; align-items: center; gap: 0.4rem; background: #0d260d; border: 1px solid #2a6b2a; border-radius: 12px; padding: 0.2rem 0.6rem; font-size: 0.8rem; color: #c8f7c8; max-width: 100%; }
+    .chip .chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chip .chip-type { color: #6c9a6c; font-size: 0.7rem; }
+    .chip .chip-x { cursor: pointer; color: #9ddb9d; font-weight: bold; }
+    .chip .chip-x:hover { color: #fff; }
+    .result-group { margin-top: 0.6rem; }
+    .result-group h3 { font-size: 0.8rem; color: #888; margin: 0 0 0.25rem; text-transform: uppercase; letter-spacing: 0.03em; }
+    .result-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0; font-size: 0.875rem; }
+    .result-row label { display: block; margin: 0; color: #ddd; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+    .result-row label .r-sub { color: #888; font-size: 0.8rem; }
+    #searchResults { margin-top: 0.25rem; }
+    #searchEmpty { color: #888; font-size: 0.85rem; margin: 0.5rem 0; }
+    .tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid #444; margin: 1rem 0; flex-wrap: wrap; }
+    .tab { background: none; border: none; border-bottom: 2px solid transparent; color: #aaa; padding: 0.5rem 0.9rem; font-size: 0.9rem; border-radius: 0; }
+    .tab:hover { color: #eee; }
+    .tab.active { color: #fff; border-bottom-color: #0070f3; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    .tab-panel .card:first-child { margin-top: 0; }
   </style>
 </head>
 <body>
   <h1 id="top">Subfin Device Manager</h1>
   <p class="subtitle" id="subtitle">Loading…</p>
 
-  <nav class="page-nav">
-    <a href="#linkCard">Link Device</a>
-    <a href="#devicesCard">Linked Devices</a>
-    <a href="#sharesCard">Shares</a>
-    <a href="#libraryCard">Library</a>
-  </nav>
+  <div class="tabs">
+    <button class="tab active" id="tab-devices" onclick="showTab('devices')">Devices</button>
+    <button class="tab" id="tab-shares" onclick="showTab('shares')">Shares</button>
+    <button class="tab" id="tab-library" onclick="showTab('library')">Library</button>
+  </div>
 
   <div id="banner"></div>
 
+  <div class="tab-panel active" id="panel-devices">
   <div class="card" id="linkCard">
-    <div class="h2-row"><h2>Link a New Device</h2><a class="top-link" href="#top">↑ top</a></div>
+    <div class="h2-row"><h2>Link a New Device</h2></div>
     <label for="deviceLabel">Device label (optional — e.g. "DSub on Phone")</label>
     <input type="text" id="deviceLabel" placeholder="My Phone">
     <div class="btn-row">
@@ -79,17 +97,45 @@
   </div>
 
   <div class="card" id="devicesCard">
-    <div class="h2-row"><h2>Linked Devices</h2><a class="top-link" href="#top">↑ top</a></div>
+    <div class="h2-row"><h2>Linked Devices</h2></div>
     <div id="deviceList"><p id="noDevices" style="display:none">No devices linked yet.</p></div>
+  </div>
+  </div><!-- /panel-devices -->
+
+  <div class="tab-panel" id="panel-shares">
+  <div class="card" id="createShareCard" style="display:none">
+    <div class="h2-row"><h2>Create a Share</h2></div>
+    <p style="font-size:0.875rem;color:#aaa;margin:0 0 0.75rem">
+      Search your library, tick the artists, albums, songs or playlists you want, then create a public link.
+    </p>
+    <label for="searchInput">Search</label>
+    <div class="search-row">
+      <input type="text" id="searchInput" placeholder="Artist, album, song or playlist…">
+      <button id="searchBtn" onclick="runSearch()">Search</button>
+    </div>
+    <div id="searchResults"></div>
+
+    <label style="margin-top:0.5rem">Selected items</label>
+    <div class="selected-chips" id="selectedChips"><span id="noSelection" style="color:#888;font-size:0.85rem">Nothing selected yet.</span></div>
+
+    <label for="shareDesc">Description (optional)</label>
+    <input type="text" id="shareDesc" placeholder="e.g. Summer mixtape">
+    <label for="shareExpires">Expires (optional)</label>
+    <input type="datetime-local" id="shareExpires">
+    <div class="btn-row">
+      <button id="createShareBtn" onclick="submitCreateShare()">Create Share Link</button>
+    </div>
   </div>
 
   <div class="card" id="sharesCard" style="display:none">
-    <div class="h2-row"><h2 id="sharesTitle">Shares</h2><a class="top-link" href="#top">↑ top</a></div>
+    <div class="h2-row"><h2 id="sharesTitle">Shares</h2></div>
     <div id="sharesList"></div>
   </div>
+  </div><!-- /panel-shares -->
 
+  <div class="tab-panel" id="panel-library">
   <div class="card" id="libraryCard" style="display:none">
-    <div class="h2-row"><h2>Library Selection</h2><a class="top-link" href="#top">↑ top</a></div>
+    <div class="h2-row"><h2>Library Selection</h2></div>
     <p style="font-size:0.875rem;color:#aaa;margin:0 0 0.75rem">
       Choose which Jellyfin music libraries appear in Subsonic clients.
       Deselect all to show all libraries.
@@ -99,6 +145,7 @@
       <button id="saveLibBtn" onclick="saveLibraries()">Save</button>
     </div>
   </div>
+  </div><!-- /panel-library -->
 
   <script>
     // ── Jellyfin session ──────────────────────────────────────────────────────
@@ -108,6 +155,15 @@
 
     function authHeaders() {
       return token ? { 'Authorization': `MediaBrowser Token="${token}"` } : {};
+    }
+
+    // ── Tabs ──────────────────────────────────────────────────────────────────
+
+    function showTab(name) {
+      for (const p of document.querySelectorAll('.tab-panel')) p.classList.remove('active');
+      for (const t of document.querySelectorAll('.tab')) t.classList.remove('active');
+      document.getElementById('panel-' + name)?.classList.add('active');
+      document.getElementById('tab-' + name)?.classList.add('active');
     }
 
     function readStoredToken() {
@@ -149,6 +205,7 @@
       loadDevices();
       loadLibraries();
       loadShares(me);
+      initCreateShare();
     }
 
     // ── Banner ────────────────────────────────────────────────────────────────
@@ -410,6 +467,133 @@
 
     function copyShareUrl(url) {
       navigator.clipboard.writeText(url).then(() => showBanner('Share URL copied to clipboard.', true)).catch(() => {});
+    }
+
+    // ── Create share ────────────────────────────────────────────────────────────
+
+    let searchItems = {};       // id -> { id, name, type } for the current result set
+    let selected = {};          // id -> { id, name, type } chosen by the user
+
+    async function initCreateShare() {
+      // Probe the search endpoint; a 404 means sharing is disabled — remove the Shares tab.
+      const r = await fetch('/subfin/api/search?query=', { headers: authHeaders() });
+      if (!r.ok) {
+        document.getElementById('tab-shares')?.remove();
+        document.getElementById('panel-shares')?.remove();
+        if (document.getElementById('tab-devices') && !document.querySelector('.tab.active')) showTab('devices');
+        return;
+      }
+      document.getElementById('createShareCard').style.display = '';
+      document.getElementById('searchInput').addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); runSearch(); }
+      });
+      renderSelected();
+    }
+
+    async function runSearch() {
+      const q = document.getElementById('searchInput').value.trim();
+      const results = document.getElementById('searchResults');
+      if (!q) { results.innerHTML = '<p id="searchEmpty">Type something to search.</p>'; return; }
+      results.innerHTML = '<p id="searchEmpty">Searching…</p>';
+      const r = await fetch('/subfin/api/search?query=' + encodeURIComponent(q), { headers: authHeaders() });
+      if (!r.ok) { results.innerHTML = '<p id="searchEmpty">Search failed (' + r.status + ').</p>'; return; }
+      renderSearchResults(await r.json());
+    }
+
+    function renderSearchResults(data) {
+      searchItems = {};
+      const groups = [
+        { key: 'artists',   title: 'Artists',   type: 'artist',   sub: a => a.albumCount != null ? a.albumCount + ' album' + (a.albumCount === 1 ? '' : 's') : '' },
+        { key: 'albums',    title: 'Albums',    type: 'album',    sub: a => [a.artist, a.year].filter(Boolean).join(' · ') },
+        { key: 'songs',     title: 'Songs',     type: 'song',     sub: s => [s.artist, s.album].filter(Boolean).join(' · ') },
+        { key: 'playlists', title: 'Playlists', type: 'playlist', sub: p => (p.songCount || 0) + ' song' + (p.songCount === 1 ? '' : 's') },
+      ];
+      let html = '';
+      let total = 0;
+      for (const g of groups) {
+        const items = data[g.key] || [];
+        if (!items.length) continue;
+        total += items.length;
+        html += `<div class="result-group"><h3>${g.title}</h3>`;
+        for (const it of items) {
+          const name = g.type === 'song' ? it.title : it.name;
+          searchItems[it.id] = { id: it.id, name, type: g.type };
+          const sub = g.sub(it);
+          const checked = selected[it.id] ? ' checked' : '';
+          html += `<div class="result-row">
+            <input type="checkbox" id="res-${escHtml(it.id)}" onchange="toggleSelect('${escHtml(it.id)}', this.checked)"${checked}>
+            <label for="res-${escHtml(it.id)}">${escHtml(name)}${sub ? ` <span class="r-sub">— ${escHtml(sub)}</span>` : ''}</label>
+          </div>`;
+        }
+        html += '</div>';
+      }
+      document.getElementById('searchResults').innerHTML = total ? html : '<p id="searchEmpty">No matches.</p>';
+    }
+
+    function toggleSelect(id, checked) {
+      if (checked) {
+        const item = searchItems[id] || selected[id];
+        if (item) selected[id] = item;
+      } else {
+        delete selected[id];
+      }
+      renderSelected();
+    }
+
+    function removeSelected(id) {
+      delete selected[id];
+      const cb = document.getElementById('res-' + id);
+      if (cb) cb.checked = false;
+      renderSelected();
+    }
+
+    function renderSelected() {
+      const el = document.getElementById('selectedChips');
+      const ids = Object.keys(selected);
+      if (!ids.length) { el.innerHTML = '<span id="noSelection" style="color:#888;font-size:0.85rem">Nothing selected yet.</span>'; return; }
+      el.innerHTML = ids.map(id => {
+        const it = selected[id];
+        return `<span class="chip">
+          <span class="chip-type">${escHtml(it.type)}</span>
+          <span class="chip-label">${escHtml(it.name)}</span>
+          <span class="chip-x" title="Remove" onclick="removeSelected('${escHtml(id)}')">×</span>
+        </span>`;
+      }).join('');
+    }
+
+    async function submitCreateShare() {
+      const ids = Object.keys(selected);
+      if (!ids.length) { showBanner('Select at least one item to share.', false); return; }
+      const description = document.getElementById('shareDesc').value.trim();
+      const expiresRaw = document.getElementById('shareExpires').value;
+      const expires = expiresRaw ? String(new Date(expiresRaw).getTime()) : '';
+
+      const btn = document.getElementById('createShareBtn');
+      btn.disabled = true;
+      try {
+        const r = await fetch('/subfin/api/shares', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ ids, description, expires }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { showBanner(d.title || d.error || ('Create failed (' + r.status + ')'), false); return; }
+
+        // Reset the form and refresh the share list
+        selected = {};
+        searchItems = {};
+        document.getElementById('searchInput').value = '';
+        document.getElementById('shareDesc').value = '';
+        document.getElementById('shareExpires').value = '';
+        document.getElementById('searchResults').innerHTML = '';
+        renderSelected();
+
+        navigator.clipboard.writeText(d.url).catch(() => {});
+        showBanner('Share created (' + d.songCount + ' track' + (d.songCount === 1 ? '' : 's') + '). Link copied to clipboard:\n' + d.url, true);
+        loadShares({ name: currentUsername });
+      } finally {
+        btn.disabled = false;
+      }
     }
 
     function escHtml(s) {
