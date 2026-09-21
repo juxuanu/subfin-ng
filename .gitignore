@@ -12,7 +12,6 @@ issues/
 localenv
 
 # Local dev/validation tooling — not part of the plugin
-scripts/publish.sh
 scripts/deploy-dev.sh
 scripts/endpoint-sweep.sh
 scripts/get-creds.js
