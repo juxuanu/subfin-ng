@@ -24,6 +24,7 @@ public static class SubsonicConstants
     /// <summary>OpenSubsonic extensions actually implemented, as returned by getOpenSubsonicExtensions.</summary>
     public static readonly (string Name, int[] Versions)[] Extensions =
     [
+        ("apiKeyAuthentication", [1]),
         ("transcodeOffset", [1]),
         ("songLyrics", [1]),
     ];
@@ -38,6 +39,9 @@ public static class ErrorCode
     public const int ServerDown = 30;
     public const int WrongCredentials = 40;
     public const int TokenAuthNotSupported = 41;
+    public const int AuthMechanismNotSupported = 42;
+    public const int ConflictingAuthMechanisms = 43;
+    public const int InvalidApiKey = 44;
     public const int NotLicensed = 50;
     public const int TrialExpired = 60;
     public const int NotFound = 70;

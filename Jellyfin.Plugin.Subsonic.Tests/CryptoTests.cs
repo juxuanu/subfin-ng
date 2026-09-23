@@ -5,6 +5,7 @@ using Xunit;
 
 namespace Jellyfin.Plugin.Subsonic.Tests;
 
+[Collection("StaticState")]
 public class CryptoTests
 {
     private static string TestSalt() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));

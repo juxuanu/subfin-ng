@@ -138,7 +138,7 @@ public class WebController : ControllerBase
         var password = GeneratePassword();
         var deviceId = SubsonicStore.InsertDevice(user.Username, user.Id.ToString("N"), password, req.DeviceLabel ?? "", null, null);
 
-        return Ok(new { deviceId, subsonicUsername = user.Username, password, message = "Device linked. Save this password — it will not be shown again." });
+        return Ok(new { deviceId, subsonicUsername = user.Username, password, message = "Device linked. Save this password — it will not be shown again. It also works as an OpenSubsonic API key." });
     }
 
     [HttpPost("api/devices/{id}/rename")]

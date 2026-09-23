@@ -47,6 +47,7 @@ public class ResponseShapeTests
     {
         var names = Root(XmlBuilder.OpenSubsonicExtensions())["openSubsonicExtensions", Ns]!
             .ChildNodes.Cast<XmlElement>().Select(e => e.GetAttribute("name")).ToList();
+        Assert.Contains("apiKeyAuthentication", names);
         Assert.DoesNotContain("template", names);
     }
 

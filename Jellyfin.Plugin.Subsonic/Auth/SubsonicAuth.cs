@@ -42,6 +42,20 @@ public class SubsonicAuth
         var s = query["s"].ToString();
         var apiKey = query["apiKey"].ToString();
 
+        // OpenSubsonic apiKeyAuthentication: the key alone identifies the user (a device's app
+        // password); sending it together with any other credential is an error.
+        if (!string.IsNullOrEmpty(apiKey))
+        {
+            if (!string.IsNullOrEmpty(u) || !string.IsNullOrEmpty(p) || !string.IsNullOrEmpty(t) || !string.IsNullOrEmpty(s))
+                return new AuthError(43, "Multiple conflicting authentication mechanisms provided.");
+            var keyDevice = SubsonicStore.GetDeviceByApiKey(apiKey);
+            if (keyDevice == null) return new AuthError(44, "Invalid API key.");
+            var (keyDevId, keyDevName) = DeviceDisplay(keyDevice.Id, keyDevice.DeviceLabel);
+            return new AuthResult(keyDevice.SubsonicUsername, keyDevice.JellyfinUserId, keyDevId, keyDevName);
+        }
+        if (!string.IsNullOrEmpty(p) && (!string.IsNullOrEmpty(t) || !string.IsNullOrEmpty(s)))
+            return new AuthError(43, "Multiple conflicting authentication mechanisms provided.");
+
         // Share auth: u=share_<uid>
         if (u.StartsWith("share_", StringComparison.Ordinal))
         {
@@ -78,16 +92,11 @@ public class SubsonicAuth
         if (string.IsNullOrEmpty(u))
             return new AuthError(10, "Required parameter 'u' (username) missing.");
 
-        // Prefer p= / apiKey= over t+s
         string? password = null;
         if (!string.IsNullOrEmpty(p))
         {
             password = DecodePassword(p);
             if (password == null) return new AuthError(40, "Wrong username or password.");
-        }
-        else if (!string.IsNullOrEmpty(apiKey))
-        {
-            password = apiKey;
         }
         else if (!string.IsNullOrEmpty(t) && !string.IsNullOrEmpty(s))
         {
@@ -108,7 +117,7 @@ public class SubsonicAuth
         }
 
         if (string.IsNullOrEmpty(password))
-            return new AuthError(10, "Required parameter 'p', 't'+'s', or 'apiKey' missing.");
+            return new AuthError(10, "Required parameter 'p' or 't'+'s' missing.");
 
         var matched = SubsonicStore.GetDeviceByUsernameAndPassword(u, password);
         if (matched == null)

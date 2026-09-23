@@ -108,7 +108,13 @@ public class SubsonicController : ControllerBase
         // Auth
         var authObj = _auth.Resolve(q);
         if (authObj is SubsonicAuth.AuthError err)
-            return Respond(format, SubsonicEnvelope.Error(err.Code, err.Message), XmlBuilder.ErrorEnvelope(err.Code, err.Message));
+        {
+            // API-key errors point at the page where keys are listed and revoked
+            var helpUrl = err.Code is >= ErrorCode.AuthMechanismNotSupported and <= ErrorCode.InvalidApiKey
+                ? $"{Request.Scheme}://{Request.Host}{Request.PathBase}/subfin/"
+                : null;
+            return Respond(format, SubsonicEnvelope.Error(err.Code, err.Message, helpUrl), XmlBuilder.ErrorEnvelope(err.Code, err.Message, helpUrl));
+        }
 
         var auth = (AuthResult)authObj;
         var jellyfinUser = _userManager.GetUserById(Guid.Parse(auth.JellyfinUserId));

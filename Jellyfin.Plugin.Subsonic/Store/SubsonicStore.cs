@@ -67,6 +67,7 @@ public static class SubsonicStore
         pragma.ExecuteNonQuery();
 
         RunSchema();
+        Migrate();
     }
 
     private static SqliteConnection Db => _db ?? throw new InvalidOperationException("Store not initialized");
@@ -84,7 +85,62 @@ public static class SubsonicStore
         cmd.ExecuteNonQuery();
     }
 
+    /// <summary>Brings databases created by earlier versions up to the current schema.</summary>
+    private static void Migrate()
+    {
+        using (var cols = Db.CreateCommand())
+        {
+            cols.CommandText = "SELECT COUNT(*) FROM pragma_table_info('linked_devices') WHERE name = 'api_key_lookup'";
+            if ((long)cols.ExecuteScalar()! == 0)
+            {
+                using var alter = Db.CreateCommand();
+                alter.CommandText = "ALTER TABLE linked_devices ADD COLUMN api_key_lookup TEXT";
+                alter.ExecuteNonQuery();
+            }
+        }
+        using (var idx = Db.CreateCommand())
+        {
+            idx.CommandText = "CREATE INDEX IF NOT EXISTS idx_linked_devices_api_key ON linked_devices(api_key_lookup)";
+            idx.ExecuteNonQuery();
+        }
+
+        // Devices linked before API keys existed: derive their lookup hash from the stored password.
+        var pending = new List<(long Id, byte[] Encrypted)>();
+        using (var sel = Db.CreateCommand())
+        {
+            sel.CommandText = "SELECT id, app_password_encrypted FROM linked_devices WHERE api_key_lookup IS NULL";
+            using var r = sel.ExecuteReader();
+            while (r.Read()) pending.Add((r.GetInt64(0), (byte[])r["app_password_encrypted"]));
+        }
+        foreach (var (id, encrypted) in pending)
+        {
+            string plain;
+            try { plain = Crypto.Decrypt(encrypted, _salt); }
+            catch { continue; } // unrecoverable password: the device keeps working with u/p only
+            using var upd = Db.CreateCommand();
+            upd.CommandText = "UPDATE linked_devices SET api_key_lookup = @h WHERE id = @id";
+            upd.Parameters.AddWithValue("@h", Crypto.LookupHash(plain, _salt));
+            upd.Parameters.AddWithValue("@id", id);
+            upd.ExecuteNonQuery();
+        }
+    }
+
     // ── Linked Devices ──────────────────────────────────────────────────────
+
+    /// <summary>The device whose app password is this API key; hidden web-share devices never match.</summary>
+    public static LinkedDevice? GetDeviceByApiKey(string apiKey)
+    {
+        lock (_lock)
+        {
+            using var cmd = Db.CreateCommand();
+            cmd.CommandText = @"SELECT * FROM linked_devices WHERE api_key_lookup = @h
+                                AND (jellyfin_device_id IS NULL OR jellyfin_device_id != @sentinel) LIMIT 1";
+            cmd.Parameters.AddWithValue("@h", Crypto.LookupHash(apiKey, _salt));
+            cmd.Parameters.AddWithValue("@sentinel", WebShareDeviceSentinel);
+            using var reader = cmd.ExecuteReader();
+            return reader.Read() ? ReadDevice(reader) : null;
+        }
+    }
 
     public static LinkedDevice? GetDeviceByUsernameAndPassword(string username, string password)
     {
@@ -165,8 +221,8 @@ public static class SubsonicStore
             cmd.CommandText = @"
                 INSERT INTO linked_devices
                   (subsonic_username, jellyfin_user_id, app_password_hash, app_password_encrypted,
-                   device_label, jellyfin_device_id, jellyfin_device_name)
-                VALUES (@u, @jid, @hash, @enc, @label, @did, @dname);
+                   device_label, jellyfin_device_id, jellyfin_device_name, api_key_lookup)
+                VALUES (@u, @jid, @hash, @enc, @label, @did, @dname, @lookup);
                 SELECT last_insert_rowid();";
             cmd.Parameters.AddWithValue("@u", subsonicUsername);
             cmd.Parameters.AddWithValue("@jid", jellyfinUserId);
@@ -175,6 +231,7 @@ public static class SubsonicStore
             cmd.Parameters.AddWithValue("@label", deviceLabel);
             cmd.Parameters.AddWithValue("@did", (object?)deviceId ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@dname", (object?)deviceName ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@lookup", Crypto.LookupHash(plainPassword, _salt));
             return (long)(cmd.ExecuteScalar() ?? throw new InvalidOperationException("Insert failed"));
         }
     }
@@ -198,9 +255,10 @@ public static class SubsonicStore
         lock (_lock)
         {
             using var cmd = Db.CreateCommand();
-            cmd.CommandText = "UPDATE linked_devices SET app_password_hash = @hash, app_password_encrypted = @enc WHERE id = @id";
+            cmd.CommandText = "UPDATE linked_devices SET app_password_hash = @hash, app_password_encrypted = @enc, api_key_lookup = @lookup WHERE id = @id";
             cmd.Parameters.AddWithValue("@hash", hash);
             cmd.Parameters.AddWithValue("@enc", encrypted);
+            cmd.Parameters.AddWithValue("@lookup", Crypto.LookupHash(newPassword, _salt));
             cmd.Parameters.AddWithValue("@id", id);
             cmd.ExecuteNonQuery();
         }

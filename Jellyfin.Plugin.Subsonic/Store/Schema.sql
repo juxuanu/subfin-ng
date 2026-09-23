@@ -10,7 +10,9 @@ CREATE TABLE IF NOT EXISTS linked_devices (
   device_label TEXT NOT NULL DEFAULT '',
   jellyfin_device_id TEXT,
   jellyfin_device_name TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Crypto.LookupHash of the app password, for API-key login (index created in SubsonicStore.Migrate)
+  api_key_lookup TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_linked_devices_username ON linked_devices(subsonic_username);
