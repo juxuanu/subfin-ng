@@ -473,7 +473,7 @@ public static class XmlBuilder
             WriteSongAttrs(w, e.Song);
             w.WriteAttributeString("username", e.Username);
             w.WriteAttributeString("minutesAgo", e.MinutesAgo.ToString(CultureInfo.InvariantCulture));
-            w.WriteAttributeString("playerId", e.PlayerId);
+            w.WriteAttributeString("playerId", e.PlayerId.ToString(CultureInfo.InvariantCulture));
             w.WriteAttributeString("playerName", e.PlayerName);
             w.WriteEndElement();
         }
@@ -527,4 +527,4 @@ public static class XmlBuilder
 
 // Supporting types for XML builder
 public record ShareXml(string Id, string Url, string? Description, string Username, string Created, string Expires, int VisitCount, List<Dictionary<string, object?>> Songs);
-public record NowPlayingXml(Dictionary<string, object?> Song, string Username, int MinutesAgo, string PlayerId, string PlayerName);
+public record NowPlayingXml(Dictionary<string, object?> Song, string Username, int MinutesAgo, int PlayerId, string PlayerName);

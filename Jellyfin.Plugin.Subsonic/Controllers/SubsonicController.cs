@@ -1078,39 +1078,38 @@ public class SubsonicController : ControllerBase
 
     private IActionResult GetNowPlaying(string format)
     {
-        var sessions = _sessions.Sessions.Where(s => s.NowPlayingItem != null).ToList();
-        var entries = sessions.Select(s =>
-        {
-            var item = s.NowPlayingItem;
-            if (item == null) return null;
-            var itemId = item.Id.ToString("N");
-            var song = new Dictionary<string, object?>
-            {
-                ["id"] = itemId,
-                ["title"] = item.Name ?? "",
-                ["parent"] = item.ParentId?.ToString("N") ?? "",
-                ["isDir"] = false,
-                ["isVideo"] = false,
-                ["type"] = "music",
-                ["mediaType"] = "song",
-                ["duration"] = ItemMapper.TicksToSeconds(item.RunTimeTicks),
-                ["artist"] = item.Artists?.FirstOrDefault() ?? "",
-                ["album"] = item.Album ?? "",
-                ["coverArt"] = itemId,
-            };
-            var minutesAgo = (int)(DateTime.UtcNow - s.LastActivityDate).TotalMinutes;
-            return new NowPlayingXml(song, s.UserName ?? "", minutesAgo, s.Id, s.DeviceName ?? "");
-        }).Where(e => e != null).Cast<NowPlayingXml>().ToList();
+        // Everyone's playback, as in Subsonic, but only songs this user may see.
+        var entries = _sessions.Sessions
+            .Where(s => s.NowPlayingItem != null)
+            .Select(s => (Session: s, Song: GetVisibleItem<Audio>(s.NowPlayingItem!.Id)))
+            .Where(x => x.Song != null)
+            .Select(x => new NowPlayingXml(
+                ToSongWithArtist(x.Song!),
+                x.Session.UserName ?? "",
+                Math.Max(0, (int)(DateTime.UtcNow - x.Session.LastActivityDate).TotalMinutes),
+                PlayerId(x.Session.Id),
+                x.Session.DeviceName ?? x.Session.Client ?? ""))
+            .ToList();
 
         var json = SubsonicEnvelope.Ok(new()
         {
             ["nowPlaying"] = new Dictionary<string, object>
             {
-                ["entry"] = entries.Select(e => e.Song).ToList()
+                ["entry"] = entries.Select(e => new Dictionary<string, object?>(e.Song)
+                {
+                    ["username"] = e.Username,
+                    ["minutesAgo"] = e.MinutesAgo,
+                    ["playerId"] = e.PlayerId,
+                    ["playerName"] = e.PlayerName,
+                }).ToList()
             }
         });
         return Respond(format, json, XmlBuilder.NowPlaying(entries));
     }
+
+    /// <summary>Subsonic player ids are integers; Jellyfin session ids are strings. Stable per session.</summary>
+    private static int PlayerId(string sessionId) =>
+        (int)(System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sessionId))) & 0x7fffffff);
 
     // ── savePlayQueue / getPlayQueue ─────────────────────────────────────────
 

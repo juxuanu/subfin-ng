@@ -251,6 +251,11 @@ if song_ids and "Album One" in albums:
     record("scrobble submission=true", ok(call("scrobble", {"id": song_ids[0], "submission": "true"})))
     r = call("getSong", {"id": song_ids[0]}, check_schema=False)
     record("getSong playCount incremented to 1", (r or {}).get("song", {}).get("playCount") == 1, (r or {}).get("song", {}).get("playCount"))
+    call("scrobble", {"id": song_ids[1], "submission": "false"}, check_schema=False, label="now playing")
+    r = call("getNowPlaying", label="getNowPlaying while playing")
+    np = (r or {}).get("nowPlaying", {}).get("entry", [])
+    record("getNowPlaying lists the song being played, with its user and player",
+           any(e.get("id") == song_ids[1] and e.get("username") == SU and isinstance(e.get("playerId"), int) for e in np), np)
 
     # playlists
     r = call("createPlaylist", [("name", "Conformance"), ("songId", song_ids[0]), ("songId", song_ids[1])])
