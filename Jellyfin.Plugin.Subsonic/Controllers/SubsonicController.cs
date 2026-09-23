@@ -970,30 +970,55 @@ public class SubsonicController : ControllerBase
 
     private async Task<IActionResult> Scrobble(AuthResult auth, User user, QueryParams p, string format)
     {
-        var id = p.Id;
-        if (string.IsNullOrEmpty(id)) return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
-        if (!Guid.TryParse(ItemMapper.StripPrefix(id), out var guid)) return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
+        // Several id parameters (each with its own time) submit a batch, e.g. plays queued offline.
+        var ids = Request.Query["id"];
+        var times = Request.Query["time"];
+        var isSubmission = !string.Equals(Request.Query["submission"].ToString(), "false", StringComparison.OrdinalIgnoreCase);
 
-        var item = _library.GetItemById<Audio>(guid);
-        if (item == null) return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
-
-        var submissionParam = Request.Query["submission"].ToString();
-        var isSubmission = !string.Equals(submissionParam, "false", StringComparison.OrdinalIgnoreCase);
-
-        var timeParam = Request.Query["time"].ToString();
-        long? positionTicks = long.TryParse(timeParam, out var ms) ? ms * 10_000L : null;
-
-        if (isSubmission)
+        for (var i = 0; i < ids.Count; i++)
         {
-            var data = _userData.GetUserData(user, item);
-            if (data != null)
-            {
-                data.PlayCount++;
-                data.LastPlayedDate = DateTimeOffset.UtcNow.UtcDateTime;
-                _userData.SaveUserData(user, item, data, UserDataSaveReason.PlaybackFinished, CancellationToken.None);
-            }
+            if (!Guid.TryParse(ItemMapper.StripPrefix(ids[i] ?? ""), out var guid)) continue;
+            var item = GetVisibleItem<Audio>(guid);
+            if (item == null) continue;
+
+            // "time" is when the song was listened to (ms since epoch), not a playback position.
+            DateTime? listenedAt = i < times.Count && long.TryParse(times[i], out var ms)
+                ? DateTimeOffset.FromUnixTimeMilliseconds(ms).UtcDateTime
+                : null;
+
+            if (isSubmission && listenedAt is { } at && DateTime.UtcNow - at > LateScrobble)
+                RecordPastPlay(user, item, at);
+            else
+                await ReportPlaybackAsync(auth, user, item, isSubmission);
         }
 
+        return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
+    }
+
+    // Plays submitted this long after they happened (offline clients) are recorded as history
+    // rather than as a live playback session, so they keep their real time.
+    private static readonly TimeSpan LateScrobble = TimeSpan.FromMinutes(10);
+
+    /// <summary>Counts a play that happened at <paramref name="at"/>, in a single user-data write.</summary>
+    private void RecordPastPlay(User user, Audio item, DateTime at)
+    {
+        var data = _userData.GetUserData(user, item);
+        if (data == null) return;
+        data.PlayCount++;
+        data.Played = true;
+        if (data.LastPlayedDate is not { } last || last < at)
+            data.LastPlayedDate = at;
+        _userData.SaveUserData(user, item, data, UserDataSaveReason.PlaybackFinished, CancellationToken.None);
+        _logger.LogInformation("[Subfin] scrobble: recorded play from {At:o}", at);
+    }
+
+    /// <summary>
+    /// Live playback through Jellyfin's session manager: "now playing", and when finished Jellyfin
+    /// counts the play, stamps it and notifies scrobbler plugins. It is the only writer of that play
+    /// (writing user data here as well would race with it and lose one of the updates).
+    /// </summary>
+    private async Task ReportPlaybackAsync(AuthResult auth, User user, Audio item, bool finished)
+    {
         try
         {
             var remoteIp = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "";
@@ -1007,7 +1032,7 @@ public class SubsonicController : ControllerBase
 
             await _sessions.OnPlaybackStart(new PlaybackStartInfo
             {
-                ItemId = guid,
+                ItemId = item.Id,
                 SessionId = session.Id,
                 PositionTicks = 0L,
                 PlayMethod = PlayMethod.DirectPlay,
@@ -1015,31 +1040,25 @@ public class SubsonicController : ControllerBase
                 CanSeek = true
             });
 
-            if (isSubmission)
+            if (finished)
             {
-                await _sessions.OnPlaybackProgress(new PlaybackProgressInfo
-                {
-                    ItemId = guid,
-                    SessionId = session.Id,
-                    PositionTicks = positionTicks ?? 0L,
-                    IsPaused = false
-                });
+                // Stopped at the end: played to completion.
                 await _sessions.OnPlaybackStopped(new PlaybackStopInfo
                 {
-                    ItemId = guid,
+                    ItemId = item.Id,
                     SessionId = session.Id,
-                    PositionTicks = positionTicks ?? 0L,
+                    PositionTicks = item.RunTimeTicks,
                     Failed = false
                 });
-                _logger.LogInformation("[Subfin] scrobble: sent start+progress+stop (submission)");
+                _logger.LogInformation("[Subfin] scrobble: sent start+stop (submission)");
             }
             else
             {
                 _ = _sessions.OnPlaybackProgress(new PlaybackProgressInfo
                 {
-                    ItemId = guid,
+                    ItemId = item.Id,
                     SessionId = session.Id,
-                    PositionTicks = positionTicks ?? 0L,
+                    PositionTicks = 0L,
                     IsPaused = false
                 });
                 _logger.LogInformation("[Subfin] scrobble: sent start+progress (now playing)");
@@ -1049,8 +1068,6 @@ public class SubsonicController : ControllerBase
         {
             _logger.LogWarning(ex, "[Subfin] scrobble: session reporting failed (non-fatal)");
         }
-
-        return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
     }
 
     // ── getNowPlaying ────────────────────────────────────────────────────────
