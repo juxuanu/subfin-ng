@@ -16,3 +16,6 @@ scripts/deploy-dev.sh
 scripts/endpoint-sweep.sh
 scripts/get-creds.js
 scripts/probe-api.sh
+
+# Conformance suite work directory (containers, generated media, reports)
+tests/conformance/.work/
