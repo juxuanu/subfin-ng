@@ -104,26 +104,24 @@ public static class XmlBuilder
         w.WriteEndElement();
     });
 
-    public static string User(string username) => OkEnvelope(w =>
+    public static string User(Dictionary<string, object> user) => OkEnvelope(w => WriteUser(w, user));
+
+    public static string Users(List<Dictionary<string, object>> users) => OkEnvelope(w =>
     {
-        w.WriteStartElement("user", Ns);
-        w.WriteAttributeString("username", username);
-        w.WriteAttributeString("email", "");
-        w.WriteAttributeString("scrobblingEnabled", "false");
-        w.WriteAttributeString("adminRole", "false");
-        w.WriteAttributeString("settingsRole", "false");
-        w.WriteAttributeString("downloadRole", "true");
-        w.WriteAttributeString("uploadRole", "false");
-        w.WriteAttributeString("playlistRole", "true");
-        w.WriteAttributeString("coverArtRole", "false");
-        w.WriteAttributeString("commentRole", "false");
-        w.WriteAttributeString("podcastRole", "false");
-        w.WriteAttributeString("streamRole", "true");
-        w.WriteAttributeString("jukeboxRole", "false");
-        w.WriteAttributeString("shareRole", "false");
-        w.WriteAttributeString("videoConversionRole", "false");
+        w.WriteStartElement("users", Ns);
+        foreach (var u in users) WriteUser(w, u);
         w.WriteEndElement();
     });
+
+    private static void WriteUser(XmlWriter w, Dictionary<string, object> user)
+    {
+        w.WriteStartElement("user", Ns);
+        foreach (var kv in user)
+            if (kv.Key != "folder") WriteAttr(w, kv.Key, kv.Value);
+        if (user.TryGetValue("folder", out var folders) && folders is IEnumerable<int> ids)
+            foreach (var id in ids) w.WriteElementString("folder", Ns, id.ToString(CultureInfo.InvariantCulture));
+        w.WriteEndElement();
+    }
 
     public static string License() => OkEnvelope(w =>
     {

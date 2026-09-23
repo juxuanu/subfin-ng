@@ -40,19 +40,21 @@ public static class LibraryQueries
             {
                 if (!Guid.TryParse(id.Substring(3), out var plGuid)) continue;
                 var pl = library.GetItemById<Playlist>(plGuid);
-                if (pl == null) continue;
-                foreach (var lc in pl.LinkedChildren ?? Array.Empty<LinkedChild>())
+                if (pl == null || !pl.IsVisible(user)) continue;
+                // Resolved by Jellyfin; entries whose item no longer exists are skipped
+                foreach (var (_, entry) in pl.GetManageableItems())
                 {
-                    if (!lc.ItemId.HasValue) continue;
-                    var tId = lc.ItemId.Value.ToString("N");
+                    if (entry is not Audio || !entry.IsVisibleStandalone(user)) continue;
+                    var tId = entry.Id.ToString("N");
                     if (seen.Add(tId)) flatIds.Add(tId);
                 }
             }
             else
             {
                 // Bare GUID (or ar-/al- prefixed) — resolve item type to handle artist, album, or track
-                if (!Guid.TryParse(ItemMapper.StripPrefix(id), out var guid)) continue;
+                if (!Guid.TryParse(ItemMapper.StripPrefix(id), out var guid) || guid == Guid.Empty) continue;
                 var item = library.GetItemById(guid);
+                if (item == null || !item.IsVisibleStandalone(user)) continue;
                 if (item is MusicArtist artistItem)
                 {
                     var albums = library.GetItemList(new InternalItemsQuery(user)
@@ -68,7 +70,7 @@ public static class LibraryQueries
                 {
                     AddAlbumTracks(library, user, albumItem.Id, seen, flatIds);
                 }
-                else
+                else if (item is Audio)
                 {
                     var tId = guid.ToString("N");
                     if (seen.Add(tId)) flatIds.Add(tId);

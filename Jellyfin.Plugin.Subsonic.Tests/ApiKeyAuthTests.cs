@@ -100,6 +100,18 @@ public sealed class ApiKeyAuthTests : IDisposable
     }
 
     [Fact]
+    public void ExpiredShare_NoLongerAuthenticates()
+    {
+        var device = Assert.IsType<AuthResult>(Resolve(("apiKey", Key)));
+        var deviceId = long.Parse(device.JellyfinDeviceId!["subfin-".Length..]);
+        var live = SubsonicStore.InsertShare(deviceId, ["x"], ["x"], null, DateTimeOffset.UtcNow.AddDays(1).ToString("o"), "live-secret");
+        var expired = SubsonicStore.InsertShare(deviceId, ["x"], ["x"], null, DateTimeOffset.UtcNow.AddDays(-1).ToString("o"), "old-secret");
+
+        Assert.IsType<AuthResult>(Resolve(("u", $"share_{live}"), ("p", "live-secret")));
+        Assert.Equal(40, ErrorCodeOf(Resolve(("u", $"share_{expired}"), ("p", "old-secret"))));
+    }
+
+    [Fact]
     public void DevicesFromBeforeApiKeys_AreMigrated()
     {
         // A database created by an earlier version: no api_key_lookup column.

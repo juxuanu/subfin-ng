@@ -43,6 +43,7 @@ public static class ErrorCode
     public const int ConflictingAuthMechanisms = 43;
     public const int InvalidApiKey = 44;
     public const int NotLicensed = 50;
+    public const int NotAuthorized = 50;  // "The user is not authorized for the given operation"
     public const int TrialExpired = 60;
     public const int NotFound = 70;
 }

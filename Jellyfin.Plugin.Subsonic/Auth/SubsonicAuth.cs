@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Jellyfin.Plugin.Subsonic.Store;
@@ -67,7 +68,9 @@ public class SubsonicAuth
             if (!string.IsNullOrEmpty(rawP))
             {
                 var share = SubsonicStore.GetShare(shareUid);
-                if (share != null)
+                // Expired shares stop working here too, not only on the /subfin/share page
+                var expired = share?.ExpiresAt is { } exp && DateTimeOffset.Parse(exp, CultureInfo.InvariantCulture) < DateTimeOffset.UtcNow;
+                if (share != null && !expired)
                 {
                     var storedSecret = SubsonicStore.GetShareSecret(shareUid);
                     if (storedSecret == rawP)

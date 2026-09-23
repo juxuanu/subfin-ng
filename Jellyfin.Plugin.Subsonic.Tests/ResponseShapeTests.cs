@@ -83,6 +83,16 @@ public class ResponseShapeTests
         Assert.Equal("1970-01-01T00:00:00Z", pq.GetAttribute("changed"));
     }
 
+    [Fact]
+    public void Users_ListEachUserWithFolderElements()
+    {
+        var user = new Dictionary<string, object> { ["username"] = "alice", ["adminRole"] = true, ["folder"] = new List<int> { 7, 9 } };
+        var el = Root(XmlBuilder.Users([user]))["users", Ns]!["user", Ns]!;
+        Assert.Equal("true", el.GetAttribute("adminRole"));
+        Assert.False(el.HasAttribute("folder"));
+        Assert.Equal(new[] { "7", "9" }, el.GetElementsByTagName("folder", Ns).Cast<XmlElement>().Select(f => f.InnerText));
+    }
+
     [Theory]
     [InlineData("/media/music/Artist/Album/01 Song.flac", "Artist/Album/01 Song.flac")]
     [InlineData("/media/music-extra/Other/02 B.mp3", "Other/02 B.mp3")]  // prefix of another root doesn't count
