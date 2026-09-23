@@ -33,7 +33,7 @@ public static class XmlBuilder
     }
 
     /// <summary>Error envelope.</summary>
-    public static string ErrorEnvelope(int code, string message)
+    public static string ErrorEnvelope(int code, string message, string? helpUrl = null)
     {
         var sb = new StringBuilder();
         var settings = new XmlWriterSettings { Encoding = Encoding.UTF8, Indent = false, OmitXmlDeclaration = true };
@@ -41,9 +41,13 @@ public static class XmlBuilder
         w.WriteStartElement("subsonic-response", Ns);
         w.WriteAttributeString("status", "failed");
         w.WriteAttributeString("version", SubsonicConstants.Version);
+        w.WriteAttributeString("type", SubsonicConstants.ServerType);
+        w.WriteAttributeString("serverVersion", SubsonicConstants.ServerVersion);
+        w.WriteAttributeString("openSubsonic", "true");
         w.WriteStartElement("error", Ns);
         w.WriteAttributeString("code", code.ToString(CultureInfo.InvariantCulture));
         w.WriteAttributeString("message", message);
+        if (helpUrl != null) w.WriteAttributeString("helpUrl", helpUrl);
         w.WriteEndElement();
         w.WriteEndElement();
         w.Flush();
@@ -133,7 +137,7 @@ public static class XmlBuilder
     public static string OpenSubsonicExtensions() => OkEnvelope(w =>
     {
         w.WriteStartElement("openSubsonicExtensions", Ns);
-        foreach (var (name, versions) in new[] { ("template", new[] { 1 }), ("transcodeOffset", new[] { 1 }), ("songLyrics", new[] { 1 }) })
+        foreach (var (name, versions) in SubsonicConstants.Extensions)
         {
             w.WriteStartElement("extension", Ns);
             w.WriteAttributeString("name", name);
@@ -286,11 +290,17 @@ public static class XmlBuilder
     public static string SearchResult3(
         List<Dictionary<string, object?>> artists,
         List<Dictionary<string, object?>> albums,
-        List<Dictionary<string, object?>> songs) => OkEnvelope(w =>
+        List<Dictionary<string, object?>> songs,
+        string element = "searchResult3") => OkEnvelope(w =>
     {
-        w.WriteStartElement("searchResult3", Ns);
+        w.WriteStartElement(element, Ns);
         foreach (var a in artists) { w.WriteStartElement("artist", Ns); WriteAlbumShortAttrs(w, a); w.WriteEndElement(); }
-        foreach (var a in albums) { w.WriteStartElement("album", Ns); WriteAlbumID3Attrs(w, a); w.WriteEndElement(); }
+        foreach (var a in albums)
+        {
+            w.WriteStartElement("album", Ns);
+            if (element == "searchResult2") WriteAlbumShortAttrs(w, a); else WriteAlbumID3Attrs(w, a);  // Child vs AlbumID3
+            w.WriteEndElement();
+        }
         foreach (var s in songs) { w.WriteStartElement("song", Ns); WriteSongAttrs(w, s); w.WriteEndElement(); }
         w.WriteEndElement();
     });
@@ -366,11 +376,12 @@ public static class XmlBuilder
 
     // ── Play queue ───────────────────────────────────────────────────────────
 
-    public static string PlayQueue(string? currentId, int currentIndex, long positionMs, string? changedAt, string changedBy, List<Dictionary<string, object?>> songs) => OkEnvelope(w =>
+    public static string PlayQueue(string? currentId, int currentIndex, long positionMs, string? changedAt, string changedBy, List<Dictionary<string, object?>> songs, string username = "") => OkEnvelope(w =>
     {
         w.WriteStartElement("playQueue", Ns);
         if (currentId != null) w.WriteAttributeString("current", currentId);
         w.WriteAttributeString("position", positionMs.ToString(CultureInfo.InvariantCulture));
+        w.WriteAttributeString("username", username);
         if (changedAt != null) w.WriteAttributeString("changed", changedAt);
         w.WriteAttributeString("changedBy", changedBy);
         foreach (var s in songs) { w.WriteStartElement("entry", Ns); WriteSongAttrs(w, s); w.WriteEndElement(); }
@@ -446,7 +457,7 @@ public static class XmlBuilder
 
     public static string AlbumInfo(string? notes, string? musicBrainzId, string? lastFmUrl, bool v2 = false) => OkEnvelope(w =>
     {
-        w.WriteStartElement(v2 ? "albumInfo2" : "albumInfo", Ns);
+        w.WriteStartElement("albumInfo", Ns);  // getAlbumInfo2 also returns <albumInfo>; v2 kept for callers
         if (!string.IsNullOrEmpty(musicBrainzId)) w.WriteAttributeString("musicBrainzId", musicBrainzId);
         if (!string.IsNullOrEmpty(lastFmUrl)) w.WriteAttributeString("lastFmUrl", lastFmUrl);
         if (!string.IsNullOrEmpty(notes)) { w.WriteStartElement("notes", Ns); w.WriteString(notes); w.WriteEndElement(); }
@@ -491,12 +502,12 @@ public static class XmlBuilder
         }
     }
 
-    // AlbumID3 shape: no isDir (that's a Child field)
+    // AlbumID3 shape: no isDir/title/album/parent (those are Child fields)
     private static void WriteAlbumID3Attrs(XmlWriter w, Dictionary<string, object?> album)
     {
         foreach (var kv in album)
         {
-            if (kv.Key == "isDir") continue;
+            if (kv.Key is "isDir" or "title" or "album" or "parent") continue;
             if (kv.Value is List<Dictionary<string, object?>>) continue;
             WriteAttr(w, kv.Key, kv.Value);
         }

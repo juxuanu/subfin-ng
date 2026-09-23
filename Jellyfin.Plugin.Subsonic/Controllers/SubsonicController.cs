@@ -101,8 +101,8 @@ public class SubsonicController : ControllerBase
 
         var m = method.ToLowerInvariant().TrimEnd();
 
-        // Unauthenticated endpoints
-        if (m is "ping" or "getlicense" or "getopensubsonicextensions")
+        // The only endpoint the spec requires to be public; clients use ping to verify credentials.
+        if (m is "getopensubsonicextensions")
             return Respond(format, HandleUnauthenticated(m));
 
         // Auth
@@ -132,7 +132,7 @@ public class SubsonicController : ControllerBase
     {
         "ping" => (SubsonicEnvelope.Ok(), XmlBuilder.Ping()),
         "getlicense" => (SubsonicEnvelope.Ok(new() { ["license"] = new Dictionary<string, object> { ["valid"] = true, ["email"] = "", ["licenseExpires"] = "2099-01-01T00:00:00.000Z" } }), XmlBuilder.License()),
-        "getopensubsonicextensions" => (SubsonicEnvelope.Ok(new() { ["openSubsonicExtensions"] = new[] { new Dictionary<string, object> { ["name"] = "template", ["versions"] = new[] { 1 } }, new Dictionary<string, object> { ["name"] = "transcodeOffset", ["versions"] = new[] { 1 } }, new Dictionary<string, object> { ["name"] = "songLyrics", ["versions"] = new[] { 1 } } } }), XmlBuilder.OpenSubsonicExtensions()),
+        "getopensubsonicextensions" => (SubsonicEnvelope.Ok(new() { ["openSubsonicExtensions"] = SubsonicConstants.Extensions.Select(e => new Dictionary<string, object> { ["name"] = e.Name, ["versions"] = e.Versions }).ToList() }), XmlBuilder.OpenSubsonicExtensions()),
         _ => (SubsonicEnvelope.Error(ErrorCode.NotFound, "Not found"), XmlBuilder.ErrorEnvelope(ErrorCode.NotFound, "Not found"))
     };
 
@@ -145,6 +145,7 @@ public class SubsonicController : ControllerBase
 
         return method switch
         {
+            "ping" or "getlicense" => Respond(format, HandleUnauthenticated(method)),
             "getmusicfolders" => GetMusicFolders(auth, user, format),
             "getartists" => GetArtists(auth, user, p, format),
             "getindexes" => GetIndexes(auth, user, p, format),
@@ -152,7 +153,7 @@ public class SubsonicController : ControllerBase
             "getalbum" => GetAlbum(auth, user, p, format),
             "getsong" => GetSong(p, format),
             "getmusicdirectory" => GetMusicDirectory(auth, user, p, format),
-            "search3" or "search2" => Search3(auth, user, p, format),
+            "search3" or "search2" => Search3(auth, user, p, format, search2: method == "search2"),
             "getalbumlist" => GetAlbumList(auth, user, p, format, false),
             "getalbumlist2" => GetAlbumList(auth, user, p, format, true),
             "getrandomsongs" => GetRandomSongs(auth, user, p, format),
@@ -258,8 +259,12 @@ public class SubsonicController : ControllerBase
     private IActionResult GetIndexes(AuthResult auth, User user, QueryParams p, string format)
     {
         var index = BuildArtistIndex(auth, user, p.MusicFolderId);
-        var json = SubsonicEnvelope.Ok(new() { ["indexes"] = BuildArtistsJson(index) });
-        return Respond(format, json, XmlBuilder.Indexes(index));
+        // Required by the spec. ifModifiedSince isn't supported, so the index is always current.
+        var lastModified = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var indexes = BuildArtistsJson(index);
+        indexes["lastModified"] = lastModified;
+        var json = SubsonicEnvelope.Ok(new() { ["indexes"] = indexes });
+        return Respond(format, json, XmlBuilder.Indexes(index, lastModified: lastModified));
     }
 
     private List<(string Letter, List<(string Id, string Name, int AlbumCount)> Artists)> BuildArtistIndex(
@@ -496,7 +501,7 @@ public class SubsonicController : ControllerBase
 
     // ── search3 ──────────────────────────────────────────────────────────────
 
-    private IActionResult Search3(AuthResult auth, User user, QueryParams p, string format)
+    private IActionResult Search3(AuthResult auth, User user, QueryParams p, string format, bool search2 = false)
     {
         var query = p.Get("query") ?? "";
         var artistCount = p.GetInt("artistCount", 20);
@@ -542,16 +547,17 @@ public class SubsonicController : ControllerBase
             Recursive = true,
         }).OfType<Audio>().Select(ToSongWithArtist).ToList();
 
+        var element = search2 ? "searchResult2" : "searchResult3";
         var json = SubsonicEnvelope.Ok(new()
         {
-            ["searchResult3"] = new Dictionary<string, object>
+            [element] = new Dictionary<string, object>
             {
                 ["artist"] = artists,
                 ["album"] = albums,
                 ["song"] = songs,
             }
         });
-        return Respond(format, json, XmlBuilder.SearchResult3(artists, albums, songs));
+        return Respond(format, json, XmlBuilder.SearchResult3(artists, albums, songs, element));
     }
 
     // ── getAlbumList / getAlbumList2 ─────────────────────────────────────────
@@ -610,9 +616,10 @@ public class SubsonicController : ControllerBase
         if (type == "byYear")
         {
             var fromYear = p.GetInt("fromYear", 0);
-            var toYear = p.GetInt("toYear", 9999);
-            query.Years = Enumerable.Range(fromYear, Math.Max(1, toYear - fromYear + 1)).ToArray();
-            query.OrderBy = [(ItemSortBy.ProductionYear, SortOrder.Ascending)];
+            var toYear = p.GetInt("toYear", DateTime.UtcNow.Year);
+            query.Years = YearRange(fromYear, toYear);
+            // fromYear > toYear asks for reverse chronological order
+            query.OrderBy = [(ItemSortBy.ProductionYear, fromYear > toYear ? SortOrder.Descending : SortOrder.Ascending)];
         }
         if (type == "byGenre")
         {
@@ -639,6 +646,9 @@ public class SubsonicController : ControllerBase
             Limit = size,
             Recursive = true,
         };
+        if (p.Get("genre") is { } genre) query.Genres = new List<string> { genre };
+        if (p.Get("fromYear") != null || p.Get("toYear") != null)
+            query.Years = YearRange(p.GetInt("fromYear", 0), p.GetInt("toYear", DateTime.UtcNow.Year));
         ApplyFolderScoping(query, GetEffectiveFolderIds(auth, p.MusicFolderId));
         var songs = _library.GetItemList(query).OfType<Audio>().Select(ToSongWithArtist).ToList();
 
@@ -1048,8 +1058,14 @@ public class SubsonicController : ControllerBase
     private IActionResult GetPlayQueue(AuthResult auth, string format)
     {
         var pq = SubsonicStore.GetPlayQueue(auth.SubsonicUsername);
-        if (pq == null) return Respond(format, SubsonicEnvelope.Ok(new() { ["playQueue"] = new Dictionary<string, object>() }),
-            XmlBuilder.OkEnvelope(w => { w.WriteStartElement("playQueue", "http://subsonic.org/restapi"); w.WriteEndElement(); }));
+        if (pq == null)
+        {
+            // playQueue and its username/changed/changedBy are required even when nothing was saved
+            var never = DateTimeOffset.UnixEpoch.ToString("o");
+            return Respond(format,
+                SubsonicEnvelope.Ok(new() { ["playQueue"] = new Dictionary<string, object> { ["username"] = auth.SubsonicUsername, ["changed"] = never, ["changedBy"] = "" } }),
+                XmlBuilder.PlayQueue(null, 0, 0, never, "", [], auth.SubsonicUsername));
+        }
 
         var songs = pq.EntryIds.Select(id =>
         {
@@ -1064,12 +1080,13 @@ public class SubsonicController : ControllerBase
             {
                 ["current"] = pq.CurrentId ?? "",
                 ["position"] = pq.PositionMs,
-                ["changed"] = pq.ChangedAt ?? "",
+                ["username"] = auth.SubsonicUsername,
+                ["changed"] = pq.ChangedAt ?? DateTimeOffset.UnixEpoch.ToString("o"),
                 ["changedBy"] = pq.ChangedBy,
                 ["entry"] = songs,
             }
         });
-        return Respond(format, json, XmlBuilder.PlayQueue(pq.CurrentId, pq.CurrentIndex, pq.PositionMs, pq.ChangedAt, pq.ChangedBy, songs));
+        return Respond(format, json, XmlBuilder.PlayQueue(pq.CurrentId, pq.CurrentIndex, pq.PositionMs, pq.ChangedAt, pq.ChangedBy, songs, auth.SubsonicUsername));
     }
 
     // ── Shares ───────────────────────────────────────────────────────────────
@@ -1291,7 +1308,7 @@ public class SubsonicController : ControllerBase
         var mbidResult = info?.Mbid ?? mbid;
         var url = info?.Url;
 
-        var jsonKey = v2 ? "albumInfo2" : "albumInfo";
+        const string jsonKey = "albumInfo";  // same element for getAlbumInfo and getAlbumInfo2 (unlike artistInfo2)
         var jsonInfo = new Dictionary<string, object>();
         if (notes != null) jsonInfo["notes"] = notes;
         if (mbidResult != null) jsonInfo["musicBrainzId"] = mbidResult;
@@ -1796,13 +1813,21 @@ public class SubsonicController : ControllerBase
             error = ErrorResponse(format, ErrorCode.RequiredParameterMissing, "Missing id");
             return false;
         }
-        if (!Guid.TryParse(ItemMapper.StripPrefix(id), out guid))
+        // Guid.Empty would make ILibraryManager.GetItemById throw
+        if (!Guid.TryParse(ItemMapper.StripPrefix(id), out guid) || guid == Guid.Empty)
         {
             error = ErrorResponse(format, ErrorCode.NotFound, "Not found");
             return false;
         }
         error = null;
         return true;
+    }
+
+    /// <summary>Inclusive year range; the bounds may come in either order.</summary>
+    internal static int[] YearRange(int fromYear, int toYear)
+    {
+        var (lo, hi) = fromYear <= toYear ? (fromYear, toYear) : (toYear, fromYear);
+        return Enumerable.Range(lo, hi - lo + 1).ToArray();
     }
 
     private static void ApplyFolderScoping(InternalItemsQuery query, List<string>? folderIds)

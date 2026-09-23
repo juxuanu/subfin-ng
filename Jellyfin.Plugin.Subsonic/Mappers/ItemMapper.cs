@@ -88,6 +88,11 @@ public static class ItemMapper
         {
             ["id"] = album.Id.ToString("N"),
             ["name"] = album.Name ?? "",
+            // title/album/parent make the same object a valid Child for the folder-based
+            // endpoints (getAlbumList, getStarred, search2), which require id+isDir+title
+            ["title"] = album.Name ?? "",
+            ["album"] = album.Name ?? "",
+            ["parent"] = resolvedArtistId ?? "",
             ["isDir"] = true,
             ["coverArt"] = $"al-{album.Id:N}",
             ["songCount"] = album.Tracks.Count(),

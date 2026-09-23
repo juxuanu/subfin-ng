@@ -20,6 +20,13 @@ public static class SubsonicConstants
         }
     }
     public const string ServerType = "subfin-plugin";
+
+    /// <summary>OpenSubsonic extensions actually implemented, as returned by getOpenSubsonicExtensions.</summary>
+    public static readonly (string Name, int[] Versions)[] Extensions =
+    [
+        ("transcodeOffset", [1]),
+        ("songLyrics", [1]),
+    ];
 }
 
 /// <summary>Standard Subsonic error codes.</summary>
@@ -61,19 +68,22 @@ public static class SubsonicEnvelope
         return new JsonObject { ["subsonic-response"] = inner };
     }
 
-    public static JsonObject Error(int code, string message)
+    /// <param name="helpUrl">Where users can fix the problem (e.g. manage API keys); omitted when null.</param>
+    public static JsonObject Error(int code, string message, string? helpUrl = null)
     {
+        var error = new JsonObject { ["code"] = code, ["message"] = message };
+        if (helpUrl != null) error["helpUrl"] = helpUrl;
         return new JsonObject
         {
             ["subsonic-response"] = new JsonObject
             {
                 ["status"] = "failed",
                 ["version"] = SubsonicConstants.Version,
-                ["error"] = new JsonObject
-                {
-                    ["code"] = code,
-                    ["message"] = message,
-                },
+                // required in every OpenSubsonic response, errors included
+                ["type"] = SubsonicConstants.ServerType,
+                ["serverVersion"] = SubsonicConstants.ServerVersion,
+                ["openSubsonic"] = true,
+                ["error"] = error,
             },
         };
     }
