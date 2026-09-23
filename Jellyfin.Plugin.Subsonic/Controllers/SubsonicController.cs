@@ -747,7 +747,10 @@ public class SubsonicController : ControllerBase
         return Respond(format, json, XmlBuilder.SongsByGenre(songs));
     }
 
-    // ── getPlaylists ─────────────────────────────────────────────────────────
+    // ── Playlists ────────────────────────────────────────────────────────────
+    // Jellyfin's rules: a playlist is visible to its owner, to users it is shared with and, when
+    // public, to everyone; its owner and shares with CanEdit may edit it; only the owner may delete
+    // it or change whether it is public. Songs the current user may not access are hidden.
 
     private IActionResult GetPlaylists(User user, string format)
     {
@@ -758,14 +761,11 @@ public class SubsonicController : ControllerBase
         return Respond(format, json, XmlBuilder.Playlists(playlists));
     }
 
-    // ── getPlaylist ──────────────────────────────────────────────────────────
-
     private IActionResult GetPlaylist(User user, QueryParams p, string format)
     {
-        var id = p.Id;
-        if (!TryParseItemId(id, format, out var guid, out var err)) return err!;
+        if (!TryParseItemId(p.Id, format, out var guid, out var err)) return err!;
 
-        var pl = _library.GetItemById<Playlist>(guid);
+        var pl = GetVisiblePlaylist(user, guid);
         if (pl == null) return ErrorResponse(format, ErrorCode.NotFound, "Playlist not found");
 
         var mapped = MapPlaylist(pl, user, true);
@@ -773,31 +773,46 @@ public class SubsonicController : ControllerBase
         return Respond(format, json, XmlBuilder.Playlist(mapped));
     }
 
+    private Playlist? GetVisiblePlaylist(User user, Guid id) =>
+        id != Guid.Empty && _library.GetItemById<Playlist>(id) is { } pl && pl.IsVisible(user) ? pl : null;
+
+    private static bool CanEditPlaylist(Playlist pl, User user) =>
+        pl.OwnerUserId.Equals(user.Id) || pl.Shares.Any(s => s.UserId.Equals(user.Id) && s.CanEdit);
+
+    /// <summary>
+    /// Each entry with its song, or null when the current user may not access it. Entries are
+    /// resolved by Jellyfin; ones whose item no longer exists are dropped.
+    /// </summary>
+    private List<(LinkedChild Child, Audio? Song)> PlaylistEntries(Playlist pl) =>
+        pl.GetManageableItems()
+            .Select(t => (t.Item1, t.Item2 is Audio a && _currentUser is { } u && a.IsVisibleStandalone(u) ? a : null))
+            .ToList();
+
+    /// <summary>Songs for Subsonic ids, in request order (duplicates kept), skipping unknown or inaccessible ones.</summary>
+    private List<Audio> VisibleSongs(IEnumerable<string?> ids) =>
+        ids.Select(s => Guid.TryParse(ItemMapper.StripPrefix(s ?? ""), out var g) ? GetVisibleItem<Audio>(g) : null)
+            .OfType<Audio>().ToList();
+
     private Dictionary<string, object?> MapPlaylist(Playlist pl, User user, bool includeSongs)
     {
         var changed = pl.DateLastMediaAdded ?? pl.DateCreated;
-        var songs = includeSongs
-            ? (pl.LinkedChildren ?? Array.Empty<LinkedChild>())
-                .Select(lc => lc.ItemId.HasValue ? _library.GetItemById<Audio>(lc.ItemId.Value) : null)
-                .Where(a => a != null)
-                .Cast<Audio>()
-                .Select(ToSongWithArtist)
-                .ToList()
-            : new List<Dictionary<string, object?>>();
+        var songs = PlaylistEntries(pl).Select(e => e.Song).OfType<Audio>().ToList();
+        var owner = pl.OwnerUserId.Equals(user.Id) ? user.Username : _userManager.GetUserById(pl.OwnerUserId)?.Username ?? "";
 
         return new()
         {
             ["id"] = $"pl-{pl.Id:N}",
             ["name"] = pl.Name ?? "",
             ["comment"] = pl.Overview ?? "",
-            ["owner"] = user.Username,
-            ["public"] = true,
-            ["songCount"] = pl.LinkedChildren?.Length ?? 0,
-            ["duration"] = songs.Sum(s => s.TryGetValue("duration", out var d) ? d is int i ? i : 0 : 0),
+            ["owner"] = owner,
+            ["public"] = pl.OpenAccess,
+            ["readonly"] = !CanEditPlaylist(pl, user),
+            ["songCount"] = songs.Count,
+            ["duration"] = songs.Sum(s => ItemMapper.TicksToSeconds(s.RunTimeTicks)),
             ["created"] = pl.DateCreated.ToString("o"),
             ["changed"] = (changed == default ? pl.DateCreated : changed).ToString("o"),
             ["coverArt"] = $"pl-{pl.Id:N}",
-            ["entry"] = songs,
+            ["entry"] = includeSongs ? songs.Select(ToSongWithArtist).ToList() : new List<Dictionary<string, object?>>(),
         };
     }
 
@@ -805,19 +820,39 @@ public class SubsonicController : ControllerBase
 
     private async Task<IActionResult> CreatePlaylist(User user, QueryParams p, string format)
     {
-        var name = p.Get("name") ?? "New Playlist";
-        var songIds = Request.Query["songId"].Select(s => s ?? "").Where(s => !string.IsNullOrEmpty(s)).ToList();
-        var itemIds = songIds.Select(s => { Guid.TryParse(ItemMapper.StripPrefix(s), out var g); return g; }).Where(g => g != Guid.Empty).ToArray();
+        var songs = VisibleSongs(Request.Query["songId"]);
+        Playlist? pl;
 
-        var result = await _playlists.CreatePlaylist(new MediaBrowser.Model.Playlists.PlaylistCreationRequest
+        if (p.Get("playlistId") is { } playlistId)
         {
-            Name = name,
-            ItemIdList = itemIds,
-            UserId = user.Id,
-        });
+            // With playlistId, createPlaylist replaces the songs of an existing playlist.
+            if (!TryParseItemId(playlistId, format, out var guid, out var err)) return err!;
+            pl = GetVisiblePlaylist(user, guid);
+            if (pl == null) return ErrorResponse(format, ErrorCode.NotFound, "Playlist not found");
+            if (!CanEditPlaylist(pl, user)) return ErrorResponse(format, ErrorCode.NotAuthorized, "You may not edit this playlist.");
 
-        var pl = _library.GetItemById<Playlist>(Guid.Parse(result.Id));
-        if (pl == null) return ErrorResponse(format, ErrorCode.Generic, "Failed to create playlist");
+            // Entries this user can't see weren't sent by the client; keep them.
+            var hidden = PlaylistEntries(pl).Where(e => e.Song == null).Select(e => e.Child);
+            await SavePlaylistAsync(pl, [.. songs.Select(LinkedChild.Create), .. hidden], added: songs.Count > 0);
+        }
+        else
+        {
+            var name = p.Get("name");
+            if (string.IsNullOrWhiteSpace(name))
+                return ErrorResponse(format, ErrorCode.RequiredParameterMissing, "Required parameter 'name' missing.");
+
+            var result = await _playlists.CreatePlaylist(new MediaBrowser.Model.Playlists.PlaylistCreationRequest
+            {
+                Name = name,
+                ItemIdList = [],
+                UserId = user.Id,
+                MediaType = MediaType.Audio,
+            });
+            pl = _library.GetItemById<Playlist>(Guid.Parse(result.Id));
+            if (pl == null) return ErrorResponse(format, ErrorCode.Generic, "Failed to create playlist");
+            if (songs.Count > 0)
+                await SavePlaylistAsync(pl, [.. songs.Select(LinkedChild.Create)], added: true);
+        }
 
         var mapped = MapPlaylist(pl, user, true);
         var json = SubsonicEnvelope.Ok(new() { ["playlist"] = mapped });
@@ -826,65 +861,69 @@ public class SubsonicController : ControllerBase
 
     private async Task<IActionResult> UpdatePlaylist(User user, QueryParams p, string format)
     {
-        var id = p.Id ?? p.Get("playlistId");
-        if (!TryParseItemId(id, format, out var guid, out var err)) return err!;
+        if (!TryParseItemId(p.Id, format, out var guid, out var err)) return err!;
 
-        var pl = _library.GetItemById<Playlist>(guid);
+        var pl = GetVisiblePlaylist(user, guid);
         if (pl == null) return ErrorResponse(format, ErrorCode.NotFound, "Playlist not found");
+        if (!CanEditPlaylist(pl, user)) return ErrorResponse(format, ErrorCode.NotAuthorized, "You may not edit this playlist.");
 
-        // Rename if requested
-        var name = p.Get("name");
-        if (!string.IsNullOrEmpty(name))
+        if (p.Get("public") is { } isPublic)
         {
-            pl.Name = name;
-            await _library.UpdateItemAsync(pl, pl.GetParent(), ItemUpdateType.MetadataEdit, CancellationToken.None);
+            if (!pl.OwnerUserId.Equals(user.Id))
+                return ErrorResponse(format, ErrorCode.NotAuthorized, "Only the owner can change whether a playlist is public.");
+            pl.OpenAccess = string.Equals(isPublic, "true", StringComparison.OrdinalIgnoreCase);
         }
+        if (p.Get("name") is { } name) pl.Name = name;
+        if (Request.Query.ContainsKey("comment")) pl.Overview = p.Get("comment");
 
-        // Remove songs by index (collect entryIds first so index shifting doesn't matter)
-        var indexesToRemove = Request.Query["songIndexToRemove"]
+        // songIndexToRemove indexes the entries this user sees (as returned by getPlaylist);
+        // entries hidden from them are left alone.
+        var toRemove = Request.Query["songIndexToRemove"]
             .Select(s => int.TryParse(s, out var i) ? i : -1)
-            .Where(i => i >= 0)
-            .OrderByDescending(i => i)
-            .ToList();
-
-        if (indexesToRemove.Count > 0)
+            .ToHashSet();
+        var kept = new List<LinkedChild>();
+        var visibleIndex = 0;
+        foreach (var (child, song) in PlaylistEntries(pl))
         {
-            var children = pl.LinkedChildren ?? Array.Empty<LinkedChild>();
-            var entryIds = indexesToRemove
-                .Where(i => i < children.Length)
-                .Select(i => children[i].ItemId?.ToString("N"))
-                .Where(s => !string.IsNullOrEmpty(s))
-                .Cast<string>()
-                .ToList();
-
-            if (entryIds.Count > 0)
-                await _playlists.RemoveItemFromPlaylistAsync(guid.ToString("N"), entryIds);
+            if (song != null && toRemove.Contains(visibleIndex++)) continue;
+            kept.Add(child);
         }
+        var added = VisibleSongs(Request.Query["songIdToAdd"]);
+        kept.AddRange(added.Select(LinkedChild.Create));
 
-        // Add songs
-        var songIdsToAdd = Request.Query["songIdToAdd"]
-            .Select(s => s ?? "")
-            .Where(s => !string.IsNullOrEmpty(s))
-            .Select(s => { Guid.TryParse(ItemMapper.StripPrefix(s), out var g); return g; })
-            .Where(g => g != Guid.Empty)
-            .ToArray();
-
-        if (songIdsToAdd.Length > 0)
-            await _playlists.AddItemToPlaylistAsync(guid, songIdsToAdd, position: null, userId: user.Id);
-
+        await SavePlaylistAsync(pl, kept, added: added.Count > 0);
         return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
     }
 
     private IActionResult DeletePlaylist(User user, QueryParams p, string format)
     {
-        var id = p.Id;
-        if (!TryParseItemId(id, format, out var guid, out var err)) return err!;
+        if (!TryParseItemId(p.Id, format, out var guid, out var err)) return err!;
 
-        var pl = _library.GetItemById<Playlist>(guid);
+        var pl = GetVisiblePlaylist(user, guid);
         if (pl == null) return ErrorResponse(format, ErrorCode.NotFound, "Playlist not found");
+        if (!pl.OwnerUserId.Equals(user.Id))
+            return ErrorResponse(format, ErrorCode.NotAuthorized, "Only the owner can delete a playlist.");
 
         _library.DeleteItem(pl, new MediaBrowser.Controller.Library.DeleteOptions { DeleteFileLocation = true });
         return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
+    }
+
+    /// <summary>
+    /// Saves a playlist's name, comment, visibility and, when given, its complete ordered entry list
+    /// in one write. IPlaylistManager can't do this: it has no way to set the comment, its
+    /// RemoveItemFromPlaylistAsync removes every occurrence of a song rather than one position, and
+    /// UpdatePlaylist clears and re-adds the entries in separate writes.
+    /// </summary>
+    private async Task SavePlaylistAsync(Playlist pl, IReadOnlyList<LinkedChild>? entries = null, bool added = false)
+    {
+        if (entries != null)
+            pl.LinkedChildren = [.. entries];
+        if (added)
+            pl.DateLastMediaAdded = DateTime.UtcNow;
+
+        await pl.UpdateToRepositoryAsync(ItemUpdateType.MetadataEdit, CancellationToken.None);  // also writes playlist.xml
+        if (pl.IsFile)
+            _playlists.SavePlaylistFile(pl);
     }
 
     // ── star / unstar ────────────────────────────────────────────────────────
