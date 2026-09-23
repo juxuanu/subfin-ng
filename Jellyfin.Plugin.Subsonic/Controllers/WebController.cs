@@ -48,7 +48,8 @@ public class WebController : ControllerBase
     [HttpGet("index")]
     public IActionResult Index()
     {
-        var html = GetEmbeddedHtml("index.html");
+        var html = GetEmbeddedHtml("index.html")
+            .Replace("{{BASE_URL}}", System.Text.Encodings.Web.JavaScriptEncoder.Default.Encode(Request.PathBase.Value ?? ""));
         return Content(html, "text/html; charset=utf-8");
     }
 
@@ -72,7 +73,7 @@ public class WebController : ControllerBase
 
         SubsonicStore.IncrementShareVisitCount(uid);
 
-        var baseUrl = $"{Request.Scheme}://{Request.Host}";
+        var baseUrl = $"{Request.Scheme}://{Request.Host}{Request.PathBase}";  // PathBase = Jellyfin base URL
         var tracks = share.EntryIdsFlat.Select(id =>
         {
             if (!Guid.TryParse(id, out var guid)) return null;
@@ -86,6 +87,7 @@ public class WebController : ControllerBase
         var tracksJson = JsonSerializer.Serialize(tracks);
 
         var html = GetEmbeddedHtml("share.html")
+            .Replace("{{BASE_URL}}", System.Net.WebUtility.HtmlEncode(Request.PathBase.Value ?? ""))
             .Replace("{{SHARE_UID}}", uid)
             .Replace("{{SECRET}}", System.Net.WebUtility.HtmlEncode(secret))
             .Replace("{{TRACKS_JSON}}", tracksJson)
@@ -209,7 +211,7 @@ public class WebController : ControllerBase
         var (user, err) = ResolveUser();
         if (user == null) return err!;
         var shares = SubsonicStore.GetSharesForUser(user.Username);
-        var baseUrl = $"{Request.Scheme}://{Request.Host}";
+        var baseUrl = $"{Request.Scheme}://{Request.Host}{Request.PathBase}";  // PathBase = Jellyfin base URL
         return Ok(shares.Select(s => {
             var secret = SubsonicStore.GetShareSecret(s.ShareUid) ?? "";
             return new {
@@ -321,7 +323,7 @@ public class WebController : ControllerBase
         var secret = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24)).Replace("+", "-").Replace("/", "_").Replace("=", "");
         var uid = SubsonicStore.InsertShare(deviceId, ids, flat, desc, expiresAt, secret);
 
-        var baseUrl = $"{Request.Scheme}://{Request.Host}";
+        var baseUrl = $"{Request.Scheme}://{Request.Host}{Request.PathBase}";  // PathBase = Jellyfin base URL
         var url = $"{baseUrl}/subfin/share/{uid}?secret={Uri.EscapeDataString(secret)}";
         return Ok(new { uid, url, description = desc, expires = expiresAt, songCount = flat.Count });
     }
@@ -352,7 +354,7 @@ public class WebController : ControllerBase
         if (user == null) return err!;
         if (!user.Permissions.Any(p => p.Kind == PermissionKind.IsAdministrator && p.Value)) return Forbid();
         var shares = SubsonicStore.GetAllShares();
-        var baseUrl = $"{Request.Scheme}://{Request.Host}";
+        var baseUrl = $"{Request.Scheme}://{Request.Host}{Request.PathBase}";  // PathBase = Jellyfin base URL
         return Ok(shares.Select(t => {
             var secret = SubsonicStore.GetShareSecret(t.Share.ShareUid) ?? "";
             return new {
@@ -419,7 +421,7 @@ public class WebController : ControllerBase
 
         var sb = new StringBuilder();
         sb.AppendLine("#EXTM3U");
-        var baseUrl = $"{Request.Scheme}://{Request.Host}";
+        var baseUrl = $"{Request.Scheme}://{Request.Host}{Request.PathBase}";  // PathBase = Jellyfin base URL
         foreach (var id in share.EntryIdsFlat)
         {
             if (!Guid.TryParse(id, out var guid)) continue;
