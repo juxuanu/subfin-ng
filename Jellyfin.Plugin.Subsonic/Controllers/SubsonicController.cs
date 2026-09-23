@@ -55,6 +55,9 @@ public class SubsonicController : ControllerBase
     private readonly ILogger<SubsonicController> _logger;
     private static readonly ConcurrentDictionary<string, byte> _refreshInProgress = new();
 
+    // Controllers are created per request, so this is the authenticated user of the current call.
+    private User? _currentUser;
+
     public SubsonicController(
         SubsonicAuth auth,
         ILibraryManager library,
@@ -138,6 +141,7 @@ public class SubsonicController : ControllerBase
     private async Task<IActionResult> HandleAuthenticated(string method, AuthResult auth, User user, Microsoft.AspNetCore.Http.IQueryCollection q, string format)
     {
         var p = new QueryParams(q);
+        _currentUser = user;
 
         return method switch
         {
@@ -375,7 +379,8 @@ public class SubsonicController : ControllerBase
                 .ToList();
         }
 
-        var mapped = ItemMapper.ToArtistWithAlbums(artist, albums);
+        var artistId = $"ar-{artist.Id:N}";
+        var mapped = ItemMapper.ToArtistWithAlbums(artist, albums, a => ItemMapper.ToAlbumShort(a, artistId, UserDataFor(a), StarredAt(a)));
         var json = SubsonicEnvelope.Ok(new() { ["artist"] = mapped });
         return Respond(format, json, XmlBuilder.Artist(mapped));
     }
@@ -390,15 +395,10 @@ public class SubsonicController : ControllerBase
         var album = _library.GetItemById<MusicAlbum>(guid);
         if (album == null) return ErrorResponse(format, ErrorCode.NotFound, "Album not found");
 
-        var songs = _library.GetItemList(new InternalItemsQuery(user)
-        {
-            ParentId = guid,
-            IncludeItemTypes = [BaseItemKind.Audio],
-            OrderBy = [(ItemSortBy.ParentIndexNumber, SortOrder.Ascending), (ItemSortBy.IndexNumber, SortOrder.Ascending)],
-        }).OfType<Audio>().ToList();
+        var songs = AlbumTracks(user, guid);
 
         var resolvedArtistId = ResolveArtistTagId(album.AlbumArtist ?? album.AlbumArtists.FirstOrDefault());
-        var mapped = ItemMapper.ToAlbum(album, songs, resolvedArtistId);
+        var mapped = ItemMapper.ToAlbum(album, songs, s => ToAlbumSong(s, album), resolvedArtistId, UserDataFor(album));
         var json = SubsonicEnvelope.Ok(new() { ["album"] = mapped });
         return Respond(format, json, XmlBuilder.Album(mapped));
     }
@@ -428,11 +428,15 @@ public class SubsonicController : ControllerBase
         var item = _library.GetItemById(guid);
         if (item == null) return ErrorResponse(format, ErrorCode.NotFound, "Not found");
 
-        var children = _library.GetItemList(new InternalItemsQuery(user)
-        {
-            ParentId = guid,
-            OrderBy = [(ItemSortBy.SortName, SortOrder.Ascending)],
-        });
+        // An album's direct children may be disc folders (Album/CD 1/...), which have no
+        // Subsonic representation; list its tracks instead.
+        IReadOnlyList<BaseItem> children = item is MusicAlbum
+            ? AlbumTracks(user, guid)
+            : _library.GetItemList(new InternalItemsQuery(user)
+            {
+                ParentId = guid,
+                OrderBy = [(ItemSortBy.SortName, SortOrder.Ascending)],
+            });
 
         // Fallback for special-char artists (e.g. *NSYNC, AC/DC): getIndexes emits the tag entity GUID
         // (parentless, used by AlbumArtistIds), but getMusicDirectory needs the folder/hierarchy entity
@@ -881,6 +885,7 @@ public class SubsonicController : ControllerBase
             if (data == null) continue;
             data.IsFavorite = star;
             _userData.SaveUserData(user, item, data, UserDataSaveReason.UpdateUserRating, CancellationToken.None);
+            SubsonicStore.SetStarred(user.Id.ToString("N"), item.Id.ToString("N"), star);
         }
         return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
     }
@@ -1166,7 +1171,7 @@ public class SubsonicController : ControllerBase
     {
         var artists = _library.GetItemList(new InternalItemsQuery(user)
         { IncludeItemTypes = [BaseItemKind.MusicArtist], IsFavorite = true, Recursive = true })
-            .OfType<MusicArtist>().Select(a => new Dictionary<string, object?> { ["id"] = a.Id.ToString("N"), ["name"] = a.Name ?? "" }).ToList();
+            .OfType<MusicArtist>().Select(a => new Dictionary<string, object?> { ["id"] = a.Id.ToString("N"), ["name"] = a.Name ?? "", ["starred"] = StarredAt(a) ?? a.DateCreated.ToString("o") }).ToList();
         var albums = _library.GetItemList(new InternalItemsQuery(user)
         { IncludeItemTypes = [BaseItemKind.MusicAlbum], IsFavorite = true, Recursive = true })
             .OfType<MusicAlbum>().Select(ToAlbumWithArtist).ToList();
@@ -1339,7 +1344,7 @@ public class SubsonicController : ControllerBase
             OrderBy = [(ItemSortBy.PlayCount, SortOrder.Descending)],
             Limit = count,
             Recursive = true,
-        }).OfType<Audio>().Select(a => ItemMapper.ToSong(a, artistId: $"ar-{tagArtist.Id:N}")).ToList();
+        }).OfType<Audio>().Select(ToSongWithArtist).ToList();
 
         var json = SubsonicEnvelope.Ok(new() { ["topSongs"] = new Dictionary<string, object> { ["song"] = songs } });
         return Respond(format, json, XmlBuilder.TopSongs(songs));
@@ -1806,11 +1811,48 @@ public class SubsonicController : ControllerBase
             query.AncestorIds = folderIds.Select(Guid.Parse).ToArray();
     }
 
-    private Dictionary<string, object?> ToSongWithArtist(Audio s) =>
-        ItemMapper.ToSong(s, artistId: ResolveArtistTagId(s.AlbumArtists.FirstOrDefault() ?? s.Artists.FirstOrDefault()));
+    private Dictionary<string, object?> ToSongWithArtist(Audio s) => ToAlbumSong(s, null);
+
+    private Dictionary<string, object?> ToAlbumSong(Audio s, MusicAlbum? album) =>
+        ItemMapper.ToSong(s, album?.Id.ToString("N"), album?.Name,
+            artistId: ResolveArtistTagId(s.Artists.FirstOrDefault() ?? s.AlbumArtists.FirstOrDefault()),
+            userData: UserDataFor(s), starredAt: StarredAt(s), relativePath: RelativePath(s.Path));
 
     private Dictionary<string, object?> ToAlbumWithArtist(MusicAlbum a) =>
-        ItemMapper.ToAlbumShort(a, ResolveArtistTagId(a.AlbumArtist ?? a.AlbumArtists.FirstOrDefault()));
+        ItemMapper.ToAlbumShort(a, ResolveArtistTagId(a.AlbumArtist ?? a.AlbumArtists.FirstOrDefault()), UserDataFor(a), StarredAt(a));
+
+    // Per-request: when the current user starred items through Subfin.
+    private Dictionary<string, string>? _starredDates;
+
+    private string? StarredAt(BaseItem item)
+    {
+        if (_currentUser == null) return null;
+        _starredDates ??= SubsonicStore.GetStarredDates(_currentUser.Id.ToString("N"));
+        return _starredDates.GetValueOrDefault(item.Id.ToString("N"));
+    }
+
+    // Per-request: the library folders, for making file paths relative.
+    private List<string>? _libraryRoots;
+
+    private string RelativePath(string? path)
+    {
+        _libraryRoots ??= _library.GetVirtualFolders().SelectMany(f => f.Locations).ToList();
+        return ItemMapper.RelativeToLibrary(path, _libraryRoots);
+    }
+
+
+    private UserItemData? UserDataFor(BaseItem item) =>
+        _currentUser is { } u ? _userData.GetUserData(u, item) : null;
+
+    /// <summary>All tracks of an album, including those in disc subfolders (Album/CD 1/...).</summary>
+    private List<Audio> AlbumTracks(User user, Guid albumId) =>
+        _library.GetItemList(new InternalItemsQuery(user)
+        {
+            ParentId = albumId,
+            Recursive = true,
+            IncludeItemTypes = [BaseItemKind.Audio],
+            OrderBy = [(ItemSortBy.ParentIndexNumber, SortOrder.Ascending), (ItemSortBy.IndexNumber, SortOrder.Ascending)],
+        }).OfType<Audio>().ToList();
 
     private List<string>? GetEffectiveFolderIds(AuthResult auth, string? clientParam)
     {

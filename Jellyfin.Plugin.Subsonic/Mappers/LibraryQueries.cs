@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Database.Implementations.Enums;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Library;
@@ -79,10 +80,13 @@ public static class LibraryQueries
 
     private static void AddAlbumTracks(ILibraryManager library, User user, Guid albumGuid, HashSet<string> seen, List<string> flatIds)
     {
+        // Recursive: tracks may sit in disc subfolders (Album/CD 1/...)
         var tracks = library.GetItemList(new InternalItemsQuery(user)
         {
             ParentId = albumGuid,
+            Recursive = true,
             IncludeItemTypes = [BaseItemKind.Audio],
+            OrderBy = [(ItemSortBy.ParentIndexNumber, SortOrder.Ascending), (ItemSortBy.IndexNumber, SortOrder.Ascending)],
         }).OfType<Audio>().ToList();
         foreach (var t in tracks)
             if (seen.Add(t.Id.ToString("N"))) flatIds.Add(t.Id.ToString("N"));

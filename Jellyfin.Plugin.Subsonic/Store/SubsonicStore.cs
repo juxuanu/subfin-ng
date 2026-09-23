@@ -557,6 +557,39 @@ public static class SubsonicStore
 
     public record DerivedCacheEntry(string CacheKey, string ValueJson, string CachedAt, string? LastSourceChangeAt);
 
+    // ── Starred timestamps ───────────────────────────────────────────────────
+
+    /// <summary>Records (keeping the first date) or forgets when a user starred an item.</summary>
+    public static void SetStarred(string jellyfinUserId, string itemId, bool starred)
+    {
+        lock (_lock)
+        {
+            using var cmd = Db.CreateCommand();
+            cmd.CommandText = starred
+                ? "INSERT OR IGNORE INTO starred_at (jellyfin_user_id, item_id, starred_at) VALUES (@u, @i, @at)"
+                : "DELETE FROM starred_at WHERE jellyfin_user_id = @u AND item_id = @i";
+            cmd.Parameters.AddWithValue("@u", jellyfinUserId);
+            cmd.Parameters.AddWithValue("@i", itemId);
+            cmd.Parameters.AddWithValue("@at", DateTime.UtcNow.ToString("o"));
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>item id (N format) → ISO date the user starred it.</summary>
+    public static Dictionary<string, string> GetStarredDates(string jellyfinUserId)
+    {
+        lock (_lock)
+        {
+            var result = new Dictionary<string, string>();
+            using var cmd = Db.CreateCommand();
+            cmd.CommandText = "SELECT item_id, starred_at FROM starred_at WHERE jellyfin_user_id = @u";
+            cmd.Parameters.AddWithValue("@u", jellyfinUserId);
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read()) result[reader.GetString(0)] = reader.GetString(1);
+            return result;
+        }
+    }
+
     public static DerivedCacheEntry? GetDerivedCache(string cacheKey)
     {
         lock (_lock)

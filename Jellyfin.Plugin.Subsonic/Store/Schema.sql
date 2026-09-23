@@ -52,6 +52,14 @@ CREATE TABLE IF NOT EXISTS shares (
 
 CREATE INDEX IF NOT EXISTS idx_shares_linked_device ON shares(linked_device_id);
 
+-- When an item was starred through Subfin; Jellyfin's favourites carry no timestamp.
+CREATE TABLE IF NOT EXISTS starred_at (
+  jellyfin_user_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  starred_at TEXT NOT NULL,
+  PRIMARY KEY (jellyfin_user_id, item_id)
+);
+
 CREATE TABLE IF NOT EXISTS derived_cache (
   cache_key TEXT PRIMARY KEY,
   value_json TEXT NOT NULL,
