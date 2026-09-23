@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Start a throwaway Jellyfin (podman) with a given Subfin build, configure it, and link Subsonic devices.
+# Start a throwaway Jellyfin (podman) with a given Subfin build, configure it and create its users.
 # usage: [IMAGE=...] [BASEURL=/jellyfin] WORK=<dir> up.sh <plugin.dll> <meta.json>   -> writes $WORK/creds.env
-#   admin "tester" sees every library; "limited" may only access the Music library.
+#   admin "tester" sees every library, "limited" only the Music library; "extra" and "lockme" are
+#   for the account-rule checks and "offline" is disabled.
 set -euo pipefail
 T="${WORK:?set WORK to the working directory (media/, config/, cache/)}"
 IMAGE=${IMAGE:-docker.io/jellyfin/jellyfin:12.1.20260915-010956}
@@ -59,11 +60,20 @@ done
 until [ "$(curl "$URL/ScheduledTasks?isHidden=false" -H "Authorization: $AUTH" | jq -r '[.[] | select(.Key=="RefreshLibrary") | .State][0]')" = Idle ]; do sleep 1; done
 echo "library: $(curl "$URL/Items/Counts" -H "Authorization: $AUTH" | jq -c '{SongCount,AlbumCount,MovieCount}') albums=$c"
 
-# second user: Music library only
+# more users: "limited" may only see the Music library, "offline" is a disabled account
 MUSIC_ID=$(curl "$URL/Library/VirtualFolders" -H "Authorization: $AUTH" | jq -r '.[] | select(.Name=="Music") | .ItemId')
-LID=$(curl -X POST "$URL/Users/New" -H "Authorization: $AUTH" -H 'Content-Type: application/json' -d '{"Name":"limited","Password":"lpass"}' | jq -r .Id)
-POLICY=$(curl "$URL/Users/$LID" -H "Authorization: $AUTH" | jq -c --arg m "$MUSIC_ID" '.Policy | .EnableAllFolders=false | .EnabledFolders=[$m]')
-curl -X POST "$URL/Users/$LID/Policy" -H "Authorization: $AUTH" -H 'Content-Type: application/json' -d "$POLICY"
+new_user() {  # new_user <name> <password> [jq edit of the user's policy]
+  local id policy
+  id=$(curl -X POST "$URL/Users/New" -H "Authorization: $AUTH" -H 'Content-Type: application/json' \
+    -d "{\"Name\":\"$1\",\"Password\":\"$2\"}" | jq -r .Id)
+  [ -n "${3:-}" ] || return 0
+  policy=$(curl "$URL/Users/$id" -H "Authorization: $AUTH" | jq -c --arg m "$MUSIC_ID" ".Policy | $3")
+  curl -X POST "$URL/Users/$id/Policy" -H "Authorization: $AUTH" -H 'Content-Type: application/json' -d "$policy"
+}
+new_user limited lpass '.EnableAllFolders=false | .EnabledFolders=[$m]'
+new_user extra xpass
+new_user lockme kpass '.LoginAttemptsBeforeLockout=3'  # Jellyfin 12: -1 (the default) never locks out
+new_user offline opass '.IsDisabled=true'
 
 # optionally serve Jellyfin under a base URL (as behind a path-based reverse proxy)
 if [ -n "$BASEURL" ]; then
@@ -77,11 +87,9 @@ if [ -n "$BASEURL" ]; then
 fi
 
 curl "$URL/Plugins" -H "Authorization: $AUTH" | jq -r '.[] | select(.Name=="Subfin") | "plugin: \(.Name) \(.Version) \(.Status)"'
-link() { curl -X POST "$URL/subfin/api/devices/link" -H "Authorization: $1" -H 'Content-Type: application/json' -d '{"deviceLabel":"test"}'; }
-A=$(link "$AUTH"); L=$(link "$(login limited lpass)")
+# Subsonic clients sign in with the same usernames and passwords as Jellyfin
 {
   printf 'URL=%s\nHOST=%s\nBASEURL=%s\nJF_VERSION=%s\nJF_TOKEN=%s\n' "$URL" "$HOST" "$BASEURL" "$JF_VERSION" "$(sed -E 's/.*Token="([^"]+)".*/\1/' <<<"$AUTH")"
-  printf 'AU=%s\nAP=%s\n' "$(jq -r .subsonicUsername <<<"$A")" "$(jq -r .password <<<"$A")"
-  printf 'SU=%s\nSP=%s\n' "$(jq -r .subsonicUsername <<<"$L")" "$(jq -r .password <<<"$L")"
+  printf 'AU=tester\nAP=jfpass\nSU=limited\nSP=lpass\nXU=extra\nXP=xpass\nKU=lockme\nKP=kpass\nOU=offline\nOP=opass\n'
 } > "$T/creds.env"
-echo "subsonic users: $(jq -r .subsonicUsername <<<"$A") (admin), $(jq -r .subsonicUsername <<<"$L") (Music only)"
+echo "users: tester (admin), limited (Music only), extra, lockme, offline (disabled)"

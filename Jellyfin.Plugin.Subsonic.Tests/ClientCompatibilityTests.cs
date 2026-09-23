@@ -107,7 +107,7 @@ public class ClientCompatibilityTests
     {
         var share = new ShareXml(
             Id: "uid1",
-            Url: "https://example.com/subfin/share/uid1?secret=abc",
+            Url: "https://example.com/opensubsonic/share/uid1?secret=abc",
             Description: null,
             Username: "alice",
             Created: "2026-01-15T10:30:00Z",
@@ -137,7 +137,7 @@ public class ClientCompatibilityTests
     {
         var share = new ShareXml(
             Id: "uid2",
-            Url: "https://example.com/subfin/share/uid2?secret=xyz",
+            Url: "https://example.com/opensubsonic/share/uid2?secret=xyz",
             Description: "My share",
             Username: "bob",
             Created: "2026-02-01T00:00:00Z",
@@ -175,7 +175,7 @@ public class ClientCompatibilityTests
 
         var share = new ShareXml(
             Id: "uid3",
-            Url: "https://example.com/subfin/share/uid3?secret=fallback",
+            Url: "https://example.com/opensubsonic/share/uid3?secret=fallback",
             Description: null,
             Username: "carol",
             Created: created.ToString("yyyy-MM-ddTHH:mm:ssZ"),

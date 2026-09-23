@@ -28,10 +28,13 @@ Requirements: `podman`, `ffmpeg`, `jq`, `curl`, `git`, the .NET 10 SDK and
 - **Access control** – `up.sh` creates an admin and a user limited to one of two
   music libraries. The suite checks that the limited user can't reach the other
   library by id, can't read or change other users' private playlists and shares,
-  and that share links only reach the shared songs.
-- **Authentication** – token, password, `enc:` password and API-key logins,
-  including the error codes for conflicting or invalid credentials, sent in the
-  query string or as a form `POST`.
+  and that share links only reach the shared songs, and stop at expiry.
+- **Authentication** – Jellyfin username and password logins (plain, `enc:` and as
+  a form `POST`); the error codes for token auth, API keys and conflicting
+  credentials; and Jellyfin's account rules: a disabled account, a password change
+  or a disabled account while signed in, an access schedule and the lockout.
+- **Share pages** – the player page, M3U and ZIP behind a share link, including a
+  wrong secret and an expired share.
 
 Online metadata providers are disabled, so results depend only on the files.
 

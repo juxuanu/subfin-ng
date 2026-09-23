@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{{DESCRIPTION}} — Subfin</title>
+  <title>{{DESCRIPTION}}</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; color: #eee; background: #1a1a1a; }
     h1 { font-size: 1.3rem; margin-bottom: 0.25rem; }
@@ -41,8 +41,8 @@
   <p class="empty" id="emptyMsg" style="display:none">No tracks in this share.</p>
 
   <div class="download-links">
-    <a class="download-link" href="{{BASE_URL}}/subfin/share/{{SHARE_UID}}/m3u?secret={{SECRET}}">↓ Download M3U playlist</a>
-    <a class="download-link" href="{{BASE_URL}}/subfin/share/{{SHARE_UID}}/download?secret={{SECRET}}">↓ Download ZIP</a>
+    <a class="download-link" href="{{BASE_URL}}/opensubsonic/share/{{SHARE_UID}}/m3u?secret={{SECRET}}">↓ Download M3U playlist</a>
+    <!--zip--><a class="download-link" href="{{BASE_URL}}/opensubsonic/share/{{SHARE_UID}}/download?secret={{SECRET}}">↓ Download ZIP</a><!--/zip-->
   </div>
 
   <script>

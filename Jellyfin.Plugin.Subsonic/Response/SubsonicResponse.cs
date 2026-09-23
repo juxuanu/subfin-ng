@@ -24,7 +24,6 @@ public static class SubsonicConstants
     /// <summary>OpenSubsonic extensions actually implemented, as returned by getOpenSubsonicExtensions.</summary>
     public static readonly (string Name, int[] Versions)[] Extensions =
     [
-        ("apiKeyAuthentication", [1]),
         ("formPost", [1]),
         ("transcodeOffset", [1]),
         ("songLyrics", [1]),

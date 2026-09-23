@@ -12,6 +12,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
+    <PackageReference Include="NSubstitute" Version="5.*" />
     <ProjectReference Include="..\Jellyfin.Plugin.Subsonic\Jellyfin.Plugin.Subsonic.csproj" />
   </ItemGroup>
 </Project>

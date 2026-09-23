@@ -14,15 +14,9 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Last.fm API key for getArtistInfo/getAlbumInfo. Optional — leave empty to disable.</summary>
     public string LastFmApiKey { get; set; } = string.Empty;
 
-    /// <summary>Log all incoming /rest/* requests at Debug level.</summary>
+    /// <summary>Log every Subsonic API request (method and format).</summary>
     public bool LogRestRequests { get; set; } = false;
 
     /// <summary>Enable the sharing feature (createShare, getShares, share pages). Disable to prevent users from creating or accessing shares.</summary>
     public bool SharingEnabled { get; set; } = true;
-
-    /// <summary>
-    /// CORS origins allowed for /rest/* and /subfin/* (comma-separated).
-    /// Leave empty to allow all origins (default for local dev).
-    /// </summary>
-    public string CorsOrigins { get; set; } = string.Empty;
 }

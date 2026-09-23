@@ -56,7 +56,7 @@ public class SubsonicPlugin : BasePlugin<PluginConfiguration>, IHasWebPages
     public override Guid Id => Guid.Parse("4a3b2c1d-e5f6-7890-abcd-ef1234567890");
 
     public override string Description =>
-        "OpenSubsonic REST API compatibility layer — use Subsonic/Navidrome clients with Jellyfin.";
+        "OpenSubsonic API at /opensubsonic: use Subsonic/Navidrome clients with Jellyfin, signing in with Jellyfin accounts.";
 
     public IEnumerable<PluginPageInfo> GetPages()
     {
@@ -65,14 +65,7 @@ public class SubsonicPlugin : BasePlugin<PluginConfiguration>, IHasWebPages
             new PluginPageInfo
             {
                 Name = "Subfin",
-                EmbeddedResourcePath = $"{GetType().Namespace}.Web.Views.index.html"
-            },
-            new PluginPageInfo
-            {
-                Name = "SubfinAdmin",
-                DisplayName = "Subfin",
                 EmbeddedResourcePath = $"{GetType().Namespace}.Web.Views.config.html",
-                EnableInMainMenu = true,
             }
         };
     }

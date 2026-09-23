@@ -10,21 +10,9 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.Subsonic.Store;
 
-/// <summary>Row returned from linked_devices for auth resolution.</summary>
-public record LinkedDevice(
-    long Id,
-    string SubsonicUsername,
-    string AppPasswordHash,
-    byte[] AppPasswordEncrypted,
-    string JellyfinUserId,
-    string DeviceLabel,
-    string? JellyfinDeviceId,
-    string? JellyfinDeviceName,
-    string CreatedAt);
-
 /// <summary>Play queue record.</summary>
 public record PlayQueueRecord(
-    string SubsonicUsername,
+    string UserId,
     List<string> EntryIds,
     string? CurrentId,
     int CurrentIndex,
@@ -35,7 +23,7 @@ public record PlayQueueRecord(
 /// <summary>Share record.</summary>
 public record ShareRecord(
     string ShareUid,
-    long LinkedDeviceId,
+    string OwnerUserId,
     List<string> EntryIds,
     List<string> EntryIdsFlat,
     string? Description,
@@ -59,6 +47,7 @@ public static class SubsonicStore
         _salt = salt;
         Crypto.SetSalt(salt);
 
+        _db?.Dispose();
         _db = new SqliteConnection($"Data Source={dbPath}");
         _db.Open();
 
@@ -88,308 +77,97 @@ public static class SubsonicStore
     /// <summary>Brings databases created by earlier versions up to the current schema.</summary>
     private static void Migrate()
     {
-        using (var cols = Db.CreateCommand())
-        {
-            cols.CommandText = "SELECT COUNT(*) FROM pragma_table_info('linked_devices') WHERE name = 'api_key_lookup'";
-            if ((long)cols.ExecuteScalar()! == 0)
-            {
-                using var alter = Db.CreateCommand();
-                alter.CommandText = "ALTER TABLE linked_devices ADD COLUMN api_key_lookup TEXT";
-                alter.ExecuteNonQuery();
-            }
-        }
-        using (var idx = Db.CreateCommand())
-        {
-            idx.CommandText = "CREATE INDEX IF NOT EXISTS idx_linked_devices_api_key ON linked_devices(api_key_lookup)";
-            idx.ExecuteNonQuery();
-        }
-
-        // Devices linked before API keys existed: derive their lookup hash from the stored password.
-        var pending = new List<(long Id, byte[] Encrypted)>();
-        using (var sel = Db.CreateCommand())
-        {
-            sel.CommandText = "SELECT id, app_password_encrypted FROM linked_devices WHERE api_key_lookup IS NULL";
-            using var r = sel.ExecuteReader();
-            while (r.Read()) pending.Add((r.GetInt64(0), (byte[])r["app_password_encrypted"]));
-        }
-        foreach (var (id, encrypted) in pending)
-        {
-            string plain;
-            try { plain = Crypto.Decrypt(encrypted, _salt); }
-            catch { continue; } // unrecoverable password: the device keeps working with u/p only
-            using var upd = Db.CreateCommand();
-            upd.CommandText = "UPDATE linked_devices SET api_key_lookup = @h WHERE id = @id";
-            upd.Parameters.AddWithValue("@h", Crypto.LookupHash(plain, _salt));
-            upd.Parameters.AddWithValue("@id", id);
-            upd.ExecuteNonQuery();
-        }
-    }
-
-    // ── Linked Devices ──────────────────────────────────────────────────────
-
-    /// <summary>The device whose app password is this API key; hidden web-share devices never match.</summary>
-    public static LinkedDevice? GetDeviceByApiKey(string apiKey)
-    {
-        lock (_lock)
-        {
-            using var cmd = Db.CreateCommand();
-            cmd.CommandText = @"SELECT * FROM linked_devices WHERE api_key_lookup = @h
-                                AND (jellyfin_device_id IS NULL OR jellyfin_device_id != @sentinel) LIMIT 1";
-            cmd.Parameters.AddWithValue("@h", Crypto.LookupHash(apiKey, _salt));
-            cmd.Parameters.AddWithValue("@sentinel", WebShareDeviceSentinel);
-            using var reader = cmd.ExecuteReader();
-            return reader.Read() ? ReadDevice(reader) : null;
-        }
-    }
-
-    public static LinkedDevice? GetDeviceByUsernameAndPassword(string username, string password)
-    {
-        lock (_lock)
-        {
-            using var cmd = Db.CreateCommand();
-            cmd.CommandText = "SELECT * FROM linked_devices WHERE subsonic_username = @u";
-            cmd.Parameters.AddWithValue("@u", username);
-
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read())
-            {
-                var device = ReadDevice(reader);
-                bool match;
-                try { match = new PasswordHasher<object>().VerifyHashedPassword(null!, device.AppPasswordHash, password) != PasswordVerificationResult.Failed; }
-                catch (FormatException) { match = false; }
-                if (match)
-                    return device;
-            }
-            return null;
-        }
-    }
-
-    public static List<LinkedDevice> GetDevicesForUser(string username)
-    {
-        lock (_lock)
-        {
-            var list = new List<LinkedDevice>();
-            using var cmd = Db.CreateCommand();
-            cmd.CommandText = "SELECT * FROM linked_devices WHERE subsonic_username = @u ORDER BY id";
-            cmd.Parameters.AddWithValue("@u", username);
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read()) list.Add(ReadDevice(reader));
-            return list;
-        }
-    }
-
-    public static List<LinkedDevice> GetDevicesByJellyfinUserId(string jellyfinUserId)
-    {
-        lock (_lock)
-        {
-            var list = new List<LinkedDevice>();
-            using var cmd = Db.CreateCommand();
-            cmd.CommandText = "SELECT * FROM linked_devices WHERE jellyfin_user_id = @jid ORDER BY id";
-            cmd.Parameters.AddWithValue("@jid", jellyfinUserId);
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read()) list.Add(ReadDevice(reader));
-            return list;
-        }
-    }
-
-    public static LinkedDevice? GetDeviceById(long id)
-    {
-        lock (_lock)
-        {
-            using var cmd = Db.CreateCommand();
-            cmd.CommandText = "SELECT * FROM linked_devices WHERE id = @id";
-            cmd.Parameters.AddWithValue("@id", id);
-            using var reader = cmd.ExecuteReader();
-            return reader.Read() ? ReadDevice(reader) : null;
-        }
-    }
-
-    public static long InsertDevice(
-        string subsonicUsername,
-        string jellyfinUserId,
-        string plainPassword,
-        string deviceLabel,
-        string? deviceId,
-        string? deviceName)
-    {
-        var hash = new PasswordHasher<object>().HashPassword(null!, plainPassword);
-        var encrypted = Crypto.Encrypt(plainPassword, _salt);
-
-        lock (_lock)
-        {
-            using var cmd = Db.CreateCommand();
-            cmd.CommandText = @"
-                INSERT INTO linked_devices
-                  (subsonic_username, jellyfin_user_id, app_password_hash, app_password_encrypted,
-                   device_label, jellyfin_device_id, jellyfin_device_name, api_key_lookup)
-                VALUES (@u, @jid, @hash, @enc, @label, @did, @dname, @lookup);
-                SELECT last_insert_rowid();";
-            cmd.Parameters.AddWithValue("@u", subsonicUsername);
-            cmd.Parameters.AddWithValue("@jid", jellyfinUserId);
-            cmd.Parameters.AddWithValue("@hash", hash);
-            cmd.Parameters.AddWithValue("@enc", encrypted);
-            cmd.Parameters.AddWithValue("@label", deviceLabel);
-            cmd.Parameters.AddWithValue("@did", (object?)deviceId ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@dname", (object?)deviceName ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@lookup", Crypto.LookupHash(plainPassword, _salt));
-            return (long)(cmd.ExecuteScalar() ?? throw new InvalidOperationException("Insert failed"));
-        }
-    }
-
-    public static void UpdateDeviceLabel(long id, string label)
-    {
-        lock (_lock)
-        {
-            using var cmd = Db.CreateCommand();
-            cmd.CommandText = "UPDATE linked_devices SET device_label = @label WHERE id = @id";
-            cmd.Parameters.AddWithValue("@label", label);
-            cmd.Parameters.AddWithValue("@id", id);
-            cmd.ExecuteNonQuery();
-        }
-    }
-
-    public static void UpdateDevicePassword(long id, string newPassword)
-    {
-        var hash = new PasswordHasher<object>().HashPassword(null!, newPassword);
-        var encrypted = Crypto.Encrypt(newPassword, _salt);
-        lock (_lock)
-        {
-            using var cmd = Db.CreateCommand();
-            cmd.CommandText = "UPDATE linked_devices SET app_password_hash = @hash, app_password_encrypted = @enc, api_key_lookup = @lookup WHERE id = @id";
-            cmd.Parameters.AddWithValue("@hash", hash);
-            cmd.Parameters.AddWithValue("@enc", encrypted);
-            cmd.Parameters.AddWithValue("@lookup", Crypto.LookupHash(newPassword, _salt));
-            cmd.Parameters.AddWithValue("@id", id);
-            cmd.ExecuteNonQuery();
-        }
-    }
-
-    public static void DeleteDevice(long id)
-    {
-        lock (_lock)
-        {
-            using var cmd = Db.CreateCommand();
-            cmd.CommandText = "DELETE FROM linked_devices WHERE id = @id";
-            cmd.Parameters.AddWithValue("@id", id);
-            cmd.ExecuteNonQuery();
-        }
-    }
-
-    /// <summary>
-    /// Sentinel stored in linked_devices.jellyfin_device_id to mark the hidden
-    /// per-user pseudo-device that owns shares created from the /subfin web UI.
-    /// </summary>
-    public const string WebShareDeviceSentinel = "__subfin_web__";
-
-    /// <summary>
-    /// Returns the id of the hidden pseudo-device that owns this user's web-created
-    /// shares, creating it on first use. The share/device model requires every share
-    /// to reference a linked device; this device has no real client and is filtered
-    /// out of the device list UI. Its subsonic_username matches the Jellyfin username
-    /// so GetSharesForUser resolves web shares alongside any real device shares.
-    /// </summary>
-    public static long GetOrCreateWebShareDevice(string subsonicUsername, string jellyfinUserId)
-    {
-        lock (_lock)
-        {
-            using var sel = Db.CreateCommand();
-            sel.CommandText = "SELECT id FROM linked_devices WHERE jellyfin_user_id = @jid AND jellyfin_device_id = @sentinel LIMIT 1";
-            sel.Parameters.AddWithValue("@jid", jellyfinUserId);
-            sel.Parameters.AddWithValue("@sentinel", WebShareDeviceSentinel);
-            if (sel.ExecuteScalar() is long existing) return existing;
-        }
-        // No pseudo-device yet — create one with a random, never-shown password.
-        var password = Convert.ToBase64String(RandomNumberGenerator.GetBytes(18))
-            .Replace("+", "a").Replace("/", "b").Replace("=", "c");
-        return InsertDevice(subsonicUsername, jellyfinUserId, password, "Subfin Web", WebShareDeviceSentinel, "Subfin Web");
-    }
-
-    // ── Token auth helpers ───────────────────────────────────────────────────
-
-    /// <summary>Returns all (device_id, plaintext_password) pairs for token auth (t+s).</summary>
-    public static List<(long DeviceId, string Label, string JellyfinUserId, string PlainPassword)> GetDevicePlaintextPasswords(string username)
-    {
-        lock (_lock)
-        {
-            var list = new List<(long, string, string, string)>();
-            using var cmd = Db.CreateCommand();
-            cmd.CommandText = "SELECT id, device_label, jellyfin_user_id, app_password_encrypted FROM linked_devices WHERE subsonic_username = @u";
-            cmd.Parameters.AddWithValue("@u", username);
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read())
-            {
-                var id = reader.GetInt64(0);
-                var label = reader.GetString(1);
-                var jellyfinUserId = reader.GetString(2);
-                var blob = (byte[])reader["app_password_encrypted"];
-                try
-                {
-                    var plain = Crypto.Decrypt(blob, _salt);
-                    list.Add((id, label, jellyfinUserId, plain));
-                }
-                catch { /* skip devices with unrecoverable passwords */ }
-            }
-            return list;
-        }
-    }
-
-    // ── Pending QuickConnect ─────────────────────────────────────────────────
-
-    public static void UpsertPendingQuickConnect(string secret, string jellyfinUserId)
-    {
-        lock (_lock)
-        {
-            using var cmd = Db.CreateCommand();
-            cmd.CommandText = @"
-                INSERT INTO pending_quickconnect (secret, jellyfin_user_id)
-                VALUES (@s, @jid)
-                ON CONFLICT(secret) DO UPDATE SET jellyfin_user_id = @jid, created_at = datetime('now')";
-            cmd.Parameters.AddWithValue("@s", secret);
-            cmd.Parameters.AddWithValue("@jid", jellyfinUserId);
-            cmd.ExecuteNonQuery();
-        }
-    }
-
-    public static string? ConsumePendingQuickConnect(string secret)
-    {
-        lock (_lock)
+        // Earlier versions had their own logins: "linked devices" with per-device app passwords,
+        // which also owned shares. Logins are Jellyfin's now: re-own shares by user and drop the
+        // device data (including the stored app passwords).
+        if (TableExists("linked_devices"))
         {
             using var tx = Db.BeginTransaction();
-            try
+            if (ColumnExists("shares", "linked_device_id"))
             {
-                using var sel = Db.CreateCommand();
-                sel.Transaction = tx;
-                sel.CommandText = "SELECT jellyfin_user_id FROM pending_quickconnect WHERE secret = @s AND datetime(created_at, '+5 minutes') > datetime('now')";
-                sel.Parameters.AddWithValue("@s", secret);
-                var userId = sel.ExecuteScalar() as string;
-                if (userId != null)
-                {
-                    using var del = Db.CreateCommand();
-                    del.Transaction = tx;
-                    del.CommandText = "DELETE FROM pending_quickconnect WHERE secret = @s";
-                    del.Parameters.AddWithValue("@s", secret);
-                    del.ExecuteNonQuery();
-                }
-                tx.Commit();
-                return userId;
+                Exec(tx, @"
+                    CREATE TABLE shares_v2 (
+                      share_uid TEXT PRIMARY KEY,
+                      owner_user_id TEXT NOT NULL,
+                      entry_ids TEXT NOT NULL DEFAULT '[]',
+                      entry_ids_flat TEXT NOT NULL DEFAULT '[]',
+                      description TEXT,
+                      share_secret_encrypted BLOB,
+                      expires_at TEXT,
+                      visit_count INTEGER NOT NULL DEFAULT 0,
+                      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                    );
+                    INSERT INTO shares_v2 (share_uid, owner_user_id, entry_ids, entry_ids_flat, description,
+                                           share_secret_encrypted, expires_at, visit_count, created_at)
+                      SELECT s.share_uid, d.jellyfin_user_id, s.entry_ids, s.entry_ids_flat, s.description,
+                             s.share_secret_encrypted, s.expires_at, s.visit_count, s.created_at
+                      FROM shares s JOIN linked_devices d ON d.id = s.linked_device_id;
+                    DROP TABLE shares;
+                    ALTER TABLE shares_v2 RENAME TO shares;");
             }
-            catch { tx.Rollback(); throw; }
+            if (ColumnExists("play_queue", "subsonic_username"))
+            {
+                // Queues were per device login; keep each user's most recently saved one
+                Exec(tx, @"
+                    CREATE TABLE play_queue_v2 (
+                      user_id TEXT PRIMARY KEY,
+                      entry_ids TEXT NOT NULL DEFAULT '[]',
+                      current_id TEXT,
+                      current_index INTEGER NOT NULL DEFAULT 0,
+                      position_ms INTEGER NOT NULL DEFAULT 0,
+                      changed_at TEXT,
+                      changed_by TEXT NOT NULL DEFAULT ''
+                    );
+                    INSERT OR REPLACE INTO play_queue_v2 (user_id, entry_ids, current_id, current_index, position_ms, changed_at, changed_by)
+                      SELECT d.jellyfin_user_id, q.entry_ids, q.current_id, q.current_index, q.position_ms, q.changed_at, q.changed_by
+                      FROM play_queue q JOIN linked_devices d ON d.subsonic_username = q.subsonic_username
+                      ORDER BY q.changed_at;
+                    DROP TABLE play_queue;
+                    ALTER TABLE play_queue_v2 RENAME TO play_queue;");
+            }
+            Exec(tx, @"
+                DROP TABLE linked_devices;
+                DROP TABLE IF EXISTS pending_quickconnect;
+                DROP TABLE IF EXISTS user_library_settings;");
+            tx.Commit();
         }
+        Exec(null, "CREATE INDEX IF NOT EXISTS idx_shares_owner ON shares(owner_user_id)");
+    }
+
+    private static bool TableExists(string table) =>
+        (long)Scalar($"SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '{table}'")! > 0;
+
+    private static bool ColumnExists(string table, string column) =>
+        (long)Scalar($"SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = '{column}'")! > 0;
+
+    private static object? Scalar(string sql)
+    {
+        using var cmd = Db.CreateCommand();
+        cmd.CommandText = sql;
+        return cmd.ExecuteScalar();
+    }
+
+    private static void Exec(SqliteTransaction? tx, string sql)
+    {
+        using var cmd = Db.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = sql;
+        cmd.ExecuteNonQuery();
     }
 
     // ── Play Queue ───────────────────────────────────────────────────────────
 
-    public static PlayQueueRecord? GetPlayQueue(string username)
+    public static PlayQueueRecord? GetPlayQueue(string userId)
     {
         lock (_lock)
         {
             using var cmd = Db.CreateCommand();
-            cmd.CommandText = "SELECT * FROM play_queue WHERE subsonic_username = @u";
-            cmd.Parameters.AddWithValue("@u", username);
+            cmd.CommandText = "SELECT * FROM play_queue WHERE user_id = @u";
+            cmd.Parameters.AddWithValue("@u", userId);
             using var reader = cmd.ExecuteReader();
             if (!reader.Read()) return null;
             return new PlayQueueRecord(
-                reader.GetString(reader.GetOrdinal("subsonic_username")),
+                reader.GetString(reader.GetOrdinal("user_id")),
                 JsonSerializer.Deserialize<List<string>>(reader.GetString(reader.GetOrdinal("entry_ids"))) ?? [],
                 reader.IsDBNull(reader.GetOrdinal("current_id")) ? null : reader.GetString(reader.GetOrdinal("current_id")),
                 reader.GetInt32(reader.GetOrdinal("current_index")),
@@ -399,18 +177,18 @@ public static class SubsonicStore
         }
     }
 
-    public static void SavePlayQueue(string username, List<string> entryIds, string? currentId, int currentIndex, long positionMs, string changedBy)
+    public static void SavePlayQueue(string userId, List<string> entryIds, string? currentId, int currentIndex, long positionMs, string changedBy)
     {
         lock (_lock)
         {
             using var cmd = Db.CreateCommand();
             cmd.CommandText = @"
-                INSERT INTO play_queue (subsonic_username, entry_ids, current_id, current_index, position_ms, changed_at, changed_by)
+                INSERT INTO play_queue (user_id, entry_ids, current_id, current_index, position_ms, changed_at, changed_by)
                 VALUES (@u, @ids, @cid, @cidx, @pos, datetime('now'), @by)
-                ON CONFLICT(subsonic_username) DO UPDATE SET
+                ON CONFLICT(user_id) DO UPDATE SET
                   entry_ids = @ids, current_id = @cid, current_index = @cidx,
                   position_ms = @pos, changed_at = datetime('now'), changed_by = @by";
-            cmd.Parameters.AddWithValue("@u", username);
+            cmd.Parameters.AddWithValue("@u", userId);
             cmd.Parameters.AddWithValue("@ids", JsonSerializer.Serialize(entryIds));
             cmd.Parameters.AddWithValue("@cid", (object?)currentId ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@cidx", currentIndex);
@@ -420,43 +198,13 @@ public static class SubsonicStore
         }
     }
 
-    public static void ClearPlayQueue(string username)
+    public static void ClearPlayQueue(string userId)
     {
         lock (_lock)
         {
             using var cmd = Db.CreateCommand();
-            cmd.CommandText = "DELETE FROM play_queue WHERE subsonic_username = @u";
-            cmd.Parameters.AddWithValue("@u", username);
-            cmd.ExecuteNonQuery();
-        }
-    }
-
-    // ── User Library Settings ────────────────────────────────────────────────
-
-    public static List<string> GetUserLibrarySettings(string username)
-    {
-        lock (_lock)
-        {
-            using var cmd = Db.CreateCommand();
-            cmd.CommandText = "SELECT selected_ids FROM user_library_settings WHERE subsonic_username = @u";
-            cmd.Parameters.AddWithValue("@u", username);
-            var json = cmd.ExecuteScalar() as string;
-            if (json == null) return [];
-            return JsonSerializer.Deserialize<List<string>>(json) ?? [];
-        }
-    }
-
-    public static void SetUserLibrarySettings(string username, List<string> selectedIds)
-    {
-        lock (_lock)
-        {
-            using var cmd = Db.CreateCommand();
-            cmd.CommandText = @"
-                INSERT INTO user_library_settings (subsonic_username, selected_ids, updated_at)
-                VALUES (@u, @ids, datetime('now'))
-                ON CONFLICT(subsonic_username) DO UPDATE SET selected_ids = @ids, updated_at = datetime('now')";
-            cmd.Parameters.AddWithValue("@u", username);
-            cmd.Parameters.AddWithValue("@ids", JsonSerializer.Serialize(selectedIds));
+            cmd.CommandText = "DELETE FROM play_queue WHERE user_id = @u";
+            cmd.Parameters.AddWithValue("@u", userId);
             cmd.ExecuteNonQuery();
         }
     }
@@ -475,39 +223,21 @@ public static class SubsonicStore
         }
     }
 
-    public static List<ShareRecord> GetSharesForDevice(long linkedDeviceId)
+    public static List<ShareRecord> GetSharesForUser(string ownerUserId)
     {
         lock (_lock)
         {
             var list = new List<ShareRecord>();
             using var cmd = Db.CreateCommand();
-            cmd.CommandText = "SELECT * FROM shares WHERE linked_device_id = @id ORDER BY created_at DESC";
-            cmd.Parameters.AddWithValue("@id", linkedDeviceId);
+            cmd.CommandText = "SELECT * FROM shares WHERE owner_user_id = @o ORDER BY created_at DESC";
+            cmd.Parameters.AddWithValue("@o", ownerUserId);
             using var reader = cmd.ExecuteReader();
             while (reader.Read()) list.Add(ReadShare(reader));
             return list;
         }
     }
 
-    public static List<ShareRecord> GetSharesForUser(string username)
-    {
-        lock (_lock)
-        {
-            var list = new List<ShareRecord>();
-            using var cmd = Db.CreateCommand();
-            cmd.CommandText = @"
-                SELECT s.* FROM shares s
-                JOIN linked_devices d ON d.id = s.linked_device_id
-                WHERE d.subsonic_username = @u
-                ORDER BY s.created_at DESC";
-            cmd.Parameters.AddWithValue("@u", username);
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read()) list.Add(ReadShare(reader));
-            return list;
-        }
-    }
-
-    public static string InsertShare(long linkedDeviceId, List<string> entryIds, List<string> entryIdsFlat, string? description, string? expiresAt, string secret)
+    public static string InsertShare(string ownerUserId, List<string> entryIds, List<string> entryIdsFlat, string? description, string? expiresAt, string secret)
     {
         var uid = Guid.NewGuid().ToString("N");
         var secretEncrypted = Crypto.Encrypt(secret, _salt);
@@ -515,10 +245,10 @@ public static class SubsonicStore
         {
             using var cmd = Db.CreateCommand();
             cmd.CommandText = @"
-                INSERT INTO shares (share_uid, linked_device_id, entry_ids, entry_ids_flat, description, expires_at, share_secret_encrypted)
-                VALUES (@uid, @lid, @eids, @flat, @desc, @exp, @sec)";
+                INSERT INTO shares (share_uid, owner_user_id, entry_ids, entry_ids_flat, description, expires_at, share_secret_encrypted)
+                VALUES (@uid, @owner, @eids, @flat, @desc, @exp, @sec)";
             cmd.Parameters.AddWithValue("@uid", uid);
-            cmd.Parameters.AddWithValue("@lid", linkedDeviceId);
+            cmd.Parameters.AddWithValue("@owner", ownerUserId);
             cmd.Parameters.AddWithValue("@eids", JsonSerializer.Serialize(entryIds));
             cmd.Parameters.AddWithValue("@flat", JsonSerializer.Serialize(entryIdsFlat));
             cmd.Parameters.AddWithValue("@desc", (object?)description ?? DBNull.Value);
@@ -573,27 +303,6 @@ public static class SubsonicStore
             cmd.CommandText = "UPDATE shares SET visit_count = visit_count + 1 WHERE share_uid = @uid";
             cmd.Parameters.AddWithValue("@uid", shareUid);
             cmd.ExecuteNonQuery();
-        }
-    }
-
-    public static List<(ShareRecord Share, string SubsonicUsername)> GetAllShares()
-    {
-        lock (_lock)
-        {
-            var list = new List<(ShareRecord, string)>();
-            using var cmd = Db.CreateCommand();
-            cmd.CommandText = @"
-                SELECT s.*, d.subsonic_username FROM shares s
-                JOIN linked_devices d ON d.id = s.linked_device_id
-                ORDER BY s.created_at DESC";
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read())
-            {
-                var share = ReadShare(reader);
-                var username = reader.GetString(reader.GetOrdinal("subsonic_username"));
-                list.Add((share, username));
-            }
-            return list;
         }
     }
 
@@ -683,20 +392,9 @@ public static class SubsonicStore
 
     // ── Private helpers ──────────────────────────────────────────────────────
 
-    private static LinkedDevice ReadDevice(SqliteDataReader r) => new(
-        r.GetInt64(r.GetOrdinal("id")),
-        r.GetString(r.GetOrdinal("subsonic_username")),
-        r.GetString(r.GetOrdinal("app_password_hash")),
-        (byte[])r["app_password_encrypted"],
-        r.GetString(r.GetOrdinal("jellyfin_user_id")),
-        r.GetString(r.GetOrdinal("device_label")),
-        r.IsDBNull(r.GetOrdinal("jellyfin_device_id")) ? null : r.GetString(r.GetOrdinal("jellyfin_device_id")),
-        r.IsDBNull(r.GetOrdinal("jellyfin_device_name")) ? null : r.GetString(r.GetOrdinal("jellyfin_device_name")),
-        r.GetString(r.GetOrdinal("created_at")));
-
     private static ShareRecord ReadShare(SqliteDataReader r) => new(
         r.GetString(r.GetOrdinal("share_uid")),
-        r.GetInt64(r.GetOrdinal("linked_device_id")),
+        r.GetString(r.GetOrdinal("owner_user_id")),
         JsonSerializer.Deserialize<List<string>>(r.GetString(r.GetOrdinal("entry_ids"))) ?? [],
         JsonSerializer.Deserialize<List<string>>(r.GetString(r.GetOrdinal("entry_ids_flat"))) ?? [],
         r.IsDBNull(r.GetOrdinal("description")) ? null : r.GetString(r.GetOrdinal("description")),

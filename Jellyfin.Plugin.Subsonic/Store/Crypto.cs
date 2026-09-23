@@ -18,26 +18,10 @@ public static class Crypto
 
     // Derived keys, cached per salt (deriving takes 100k PBKDF2 iterations).
     private static (string Salt, byte[] Key)? _cachedKey;
-    private static (string Salt, byte[] Key)? _cachedLookupKey;
 
     public static void SetSalt(string base64Salt)
     {
         _GetKey(base64Salt); // pre-warm
-    }
-
-    /// <summary>
-    /// Keyed hash (HMAC-SHA256) of an app password, stored so it can be looked up as an API key
-    /// without a username. The passwords are 144-bit random values, so a fast hash is enough.
-    /// Its key is derived from, but independent of, the encryption key.
-    /// </summary>
-    public static string LookupHash(string secret, string salt)
-    {
-        if (_cachedLookupKey is not { } cached || cached.Salt != salt)
-        {
-            var key = HKDF.DeriveKey(HashAlgorithmName.SHA256, _GetKey(salt), KeyLen, info: Encoding.UTF8.GetBytes("subfin-api-key-lookup-v1"));
-            _cachedLookupKey = cached = (salt, key);
-        }
-        return Convert.ToHexString(HMACSHA256.HashData(cached.Key, Encoding.UTF8.GetBytes(secret)));
     }
 
     private static byte[] _GetKey(string base64Salt)

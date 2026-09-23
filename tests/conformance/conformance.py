@@ -19,6 +19,7 @@ creds = dict(l.split("=", 1) for l in pathlib.Path(sys.argv[1]).read_text().spli
 SPEC = pathlib.Path(sys.argv[2]).resolve()
 URL, SU, SP, AU, AP = creds["URL"], creds["SU"], creds["SP"], creds["AU"], creds["AP"]
 JF_VERSION = creds["JF_VERSION"]
+API = f"{URL}/opensubsonic/rest"
 
 registry = Registry(retrieve=lambda uri: Resource.from_contents(
     json.loads(pathlib.Path(uri.removeprefix("file://")).read_text()), default_specification=DRAFT7))
@@ -51,15 +52,31 @@ def record(name, ok, detail="", kind="behaviour"):
 
 
 def auth(**over):
-    s = secrets.token_hex(6)
-    a = {"u": SU, "t": hashlib.md5((SP + s).encode()).hexdigest(), "s": s, "v": "1.16.1", "c": "conformance", "f": "json"}
+    """Subsonic credentials: the limited user's Jellyfin username and password."""
+    a = {"u": SU, "p": SP, "v": "1.16.1", "c": "conformance", "f": "json"}
     a.update(over)
     return {k: v for k, v in a.items() if v is not None}
 
 
+def admin(**over):
+    return auth(u=AU, p=AP, **over)
+
+
+def token(password):
+    s = secrets.token_hex(6)
+    return {"t": hashlib.md5((password + s).encode()).hexdigest(), "s": s}
+
+
+def jf(method, path, **kw):
+    """Jellyfin's own API, as the admin."""
+    r = requests.request(method, f"{URL}{path}", headers={"Authorization": f'MediaBrowser Token="{creds["JF_TOKEN"]}"'}, timeout=30, **kw)
+    r.raise_for_status()
+    return r
+
+
 def call(endpoint, params=None, auth_params=None, raw_resp=False, check_schema=True, label=None):
     params = list((params or {}).items()) if isinstance(params, dict) else list(params or [])
-    r = requests.get(f"{URL}/rest/{endpoint}", params=list((auth_params or auth()).items()) + params, timeout=30)
+    r = requests.get(f"{API}/{endpoint}", params=list((auth_params or auth()).items()) + params, timeout=30)
     if raw_resp:
         return r
     try:
@@ -100,36 +117,45 @@ def err(resp):
 
 # ── envelope & auth ──────────────────────────────────────────────────────────
 r = call("ping")
-record("ping (token auth) ok", ok(r), r)
+record("ping (Jellyfin username + password) ok", ok(r), r)
 for k in ("type", "serverVersion", "openSubsonic"):
     record(f"envelope has OpenSubsonic field '{k}'", k in (r or {}), r, "spec")
-record("ping (plain p=) ok", ok(call("ping", auth_params=auth(t=None, s=None, p=SP), check_schema=False)))
-record("ping (p=enc:hex) ok", ok(call("ping", auth_params=auth(t=None, s=None, p="enc:" + SP.encode().hex()), check_schema=False)))
-r = call("ping", auth_params=auth(t=None, s=None, p="wrong-password"), check_schema=False, label="ping-wrongpw")
-record("ping with WRONG password -> error 40", err(r) == 40, r, "spec")
-r = call("getLicense", auth_params=auth(t=None, s=None, p="wrong-password"), check_schema=False, label="license-wrongpw")
-record("getLicense with WRONG password -> error 40", err(r) == 40, r, "spec")
-r = call("getAlbumList2", {"type": "newest"}, auth_params=auth(t=None, s=None, p="wrong-password"), check_schema=False, label="albums-wrongpw")
-record("authenticated endpoint with wrong password -> error 40", err(r) == 40, r)
+record("ping (p=enc:hex) ok", ok(call("ping", auth_params=auth(p="enc:" + SP.encode().hex()), check_schema=False)))
+r = call("ping", auth_params=auth(u=creds["XU"], p="wrong-password"), check_schema=False, label="ping-wrongpw")
+record("ping with a WRONG Jellyfin password -> error 40", err(r) == 40, r, "spec")
+r = call("getLicense", auth_params=auth(u="nobody", p="whatever"), check_schema=False, label="license-unknown")
+record("getLicense as an unknown user -> error 40", err(r) == 40, r, "spec")
+r = call("getAlbumList2", {"type": "newest"}, auth_params=auth(u="nobody", p="whatever"), check_schema=False, label="albums-unknown")
+record("authenticated endpoint with wrong credentials -> error 40", err(r) == 40, r)
+r = call("ping", auth_params=auth(p=None, **token(SP)), label="token auth")
+record("token auth -> error 41 (Jellyfin keeps only a password hash)", err(r) == 41, r, "spec")
+r = call("ping", auth_params=auth(**token(SP)), label="p+t")
+record("password and token together -> error 43", err(r) == 43, r, "spec")
+r = call("ping", auth_params={"apiKey": SP, "v": "1.16.1", "c": "conformance", "f": "json"}, label="apikey")
+record("apiKey -> error 42 (not offered: sign in with Jellyfin credentials)", err(r) == 42, r, "spec")
+r = call("ping", auth_params=auth(u=None), label="no-u")
+record("no username -> error 10", err(r) == 10, r, "spec")
 r = call("getOpenSubsonicExtensions", auth_params={"f": "json"})
 record("getOpenSubsonicExtensions is public", ok(r), r)
 names = [e["name"] for e in (r or {}).get("openSubsonicExtensions", [])]
 known = {p.stem for p in (SPEC.parent / "content/en/docs/Extensions").glob("*.md")} - {"_index", "template"}
-known = {k[0].lower() + k[1:] for k in known} | {"apiKeyAuthentication"}
+known = {k[0].lower() + k[1:] for k in known}
 record("advertised extensions are real spec extensions", set(names) <= known, f"advertised={names}", "spec")
-r = call("ping", auth_params={"apiKey": SP, "v": "1.16.1", "c": "conformance", "f": "json"}, check_schema=False, label="apikey-only")
-record("apiKey without u (apiKeyAuthentication semantics)", ok(r) or err(r) == 42, r, "spec")
+record("formPost is advertised, apiKeyAuthentication is not", "formPost" in names and "apiKeyAuthentication" not in names, names, "spec")
+for path in ("/rest/ping", "/subfin/", "/subfin/api/devices"):
+    x = requests.get(f"{URL}{path}", params=auth(), timeout=30, allow_redirects=False)
+    record(f"old path {path} is gone (404)", x.status_code == 404, x.status_code)
 
 # formPost: parameters in an application/x-www-form-urlencoded body
-x = requests.post(f"{URL}/rest/ping.view", data=auth(), timeout=30)
+x = requests.post(f"{API}/ping.view", data=auth(), timeout=30)
 record("formPost: credentials in the form body", x.ok and x.json().get("subsonic-response", {}).get("status") == "ok", x.text[:200], "spec")
-x = requests.post(f"{URL}/rest/getAlbumList2", params={"f": "json"}, data={**auth(f=None), "type": "alphabeticalByName", "size": 50}, timeout=30)
+x = requests.post(f"{API}/getAlbumList2", params={"f": "json"}, data={**auth(f=None), "type": "alphabeticalByName", "size": 50}, timeout=30)
 got = sorted(a["name"] for a in x.json().get("subsonic-response", {}).get("albumList2", {}).get("album", [])) if x.ok else x.text[:200]
 record("formPost: query string and body combine", got == ["Album One", "Compilation", "Double Album", "Ünïcode Album"], got, "spec")
-x = requests.post(f"{URL}/rest/ping", params={"u": "nobody"}, data=auth(), timeout=30)
+x = requests.post(f"{API}/ping", params={"u": "nobody"}, data=auth(), timeout=30)
 record("formPost: a key in both takes the body's value", x.ok and x.json().get("subsonic-response", {}).get("status") == "ok", x.text[:200], "spec")
 
-x = requests.get(f"{URL}/rest/ping", params={**auth(), "f": "xml"}, timeout=30)
+x = requests.get(f"{API}/ping", params={**auth(), "f": "xml"}, timeout=30)
 try:
     root = ET.fromstring(x.content)
     record("XML ping well-formed, subsonic-response root, restapi ns",
@@ -231,7 +257,7 @@ if song_ids:
     s = call("stream", {"id": song_ids[0]}, raw_resp=True)
     record("stream original: 200 audio/*", s.status_code == 200 and s.headers.get("content-type", "").startswith("audio/"),
            (s.status_code, s.headers.get("content-type"), len(s.content)))
-    s = requests.get(f"{URL}/rest/stream", params={**auth(), "id": song_ids[0]}, headers={"Range": "bytes=0-99"}, timeout=30)
+    s = requests.get(f"{API}/stream", params={**auth(), "id": song_ids[0]}, headers={"Range": "bytes=0-99"}, timeout=30)
     record("stream honours Range (206, 100 bytes) for seeking", s.status_code == 206 and len(s.content) == 100,
            (s.status_code, s.headers.get("content-range"), len(s.content)))
     s = call("stream", [("id", song_ids[0]), ("format", "mp3"), ("maxBitRate", "128")], raw_resp=True)
@@ -261,6 +287,10 @@ if song_ids and "Album One" in albums:
     r = call("getSong", {"id": song_ids[0]}, check_schema=False)
     record("getSong playCount incremented to 1", (r or {}).get("song", {}).get("playCount") == 1, (r or {}).get("song", {}).get("playCount"))
     call("scrobble", {"id": song_ids[1], "submission": "false"}, check_schema=False, label="now playing")
+    sess = [x for x in jf("GET", "/Sessions").json() if x.get("UserName") == SU]
+    record("now playing shows in Jellyfin as a session of the client (c=) on its own device",
+           any(x.get("Client") == "conformance" and x.get("DeviceId", "").startswith("opensubsonic-") for x in sess),
+           [(x.get("Client"), x.get("DeviceId"), x.get("DeviceName")) for x in sess])
     r = call("getNowPlaying", label="getNowPlaying while playing")
     np = (r or {}).get("nowPlaying", {}).get("entry", [])
     record("getNowPlaying lists the song being played, with its user and player",
@@ -298,9 +328,9 @@ if song_ids:
     if secret:
         from urllib.parse import unquote
         sa = {"u": f"share_{share['id']}", "p": unquote(secret), "v": "1.16.1", "c": "conformance", "f": "json"}
-        s = requests.get(f"{URL}/rest/stream", params={**sa, "id": song_ids[0]}, timeout=30)
+        s = requests.get(f"{API}/stream", params={**sa, "id": song_ids[0]}, timeout=30)
         record("share link: stream shared song -> 200", s.status_code == 200, s.status_code)
-        s = requests.get(f"{URL}/rest/download", params={**sa, "id": song_ids[1]}, timeout=30)
+        s = requests.get(f"{API}/download", params={**sa, "id": song_ids[1]}, timeout=30)
         try:
             code = s.json()["subsonic-response"]["error"]["code"]
         except Exception:
@@ -312,30 +342,63 @@ if song_ids:
         record("share link: createPlaylist -> error 50", err(r) == 50, r, "security")
         if ok(r):  # clean up if the server wrongly allowed it
             call("deletePlaylist", {"id": r["playlist"]["id"]}, check_schema=False, label="share-cleanup")
+
+        # the public share page, its playlist and ZIP download
+        import io, zipfile
+        page = requests.get(share["url"], timeout=30)
+        record("share page: 200 HTML streaming through /opensubsonic/rest",
+               page.status_code == 200 and "/opensubsonic/rest/stream.view" in page.text and f"/opensubsonic/share/{share['id']}/m3u" in page.text,
+               (page.status_code, page.text[:200]))
+        bad = requests.get(share["url"].replace("secret=", "secret=x"), timeout=30)
+        record("share page with a wrong secret -> 404", bad.status_code == 404, bad.status_code, "security")
+        m3u = requests.get(share["url"].replace(f"/{share['id']}?", f"/{share['id']}/m3u?"), timeout=30)
+        record("share M3U lists the shared song's stream URL", m3u.status_code == 200 and m3u.text.count("/opensubsonic/rest/stream.view?id=") == 1,
+               (m3u.status_code, m3u.text[:300]))
+        try:
+            z = requests.get(share["url"].replace(f"/{share['id']}?", f"/{share['id']}/download?"), timeout=30)
+            zn = (z.status_code, sorted(zipfile.ZipFile(io.BytesIO(z.content)).namelist()))
+        except (requests.RequestException, zipfile.BadZipFile) as e:
+            zn = repr(e)
+        record("share ZIP holds the shared song and a playlist", zn == (200, ["01 Song 1.flac", "playlist.m3u8"]), zn)
+        call("updateShare", {"id": share["id"], "expires": 1000}, check_schema=False, label="expire share")
+        gone = requests.get(share["url"], timeout=30)
+        record("expired share page -> 410", gone.status_code == 410, gone.status_code, "security")
+        r = call("ping", auth_params=sa, check_schema=False, label="expired share login")
+        record("expired share link can't sign in -> error 40", err(r) == 40, r, "security")
     else:
         record("createShare returned a share URL with secret", False, r)
 
-# ── API keys (apiKeyAuthentication) ─────────────────────────────────────────
-KEY = {"apiKey": SP, "v": "1.16.1", "c": "conformance", "f": "json"}
-r = call("ping", auth_params=KEY, label="apikey-ping")
-record("apiKey alone authenticates", ok(r), r, "spec")
-r = call("getUser", {"username": SU}, auth_params=KEY, check_schema=False, label="apikey-user")
-record("apiKey resolves to its device's user", (r or {}).get("user", {}).get("username") == SU, r)
-r = call("ping", auth_params={**KEY, "u": SU}, label="apikey+u")
-record("apiKey together with u -> error 43", err(r) == 43, r, "spec")
-r = call("ping", auth_params={**KEY, "apiKey": "not-a-key"}, label="apikey-bad")
-record("invalid apiKey -> error 44 with a helpUrl", err(r) == 44 and (r or {}).get("error", {}).get("helpUrl", "").endswith("/subfin/"), r, "spec")
-r = call("ping", auth_params=auth(p=SP), label="p+t")
-record("password and token together -> error 43", err(r) == 43, r, "spec")
 r = call("getAlbum", {"id": secrets.token_hex(16)}, label="error envelope")  # schema-checks a failure response
 
-# ── users & roles ───────────────────────────────────────────────────────────
-def admin(**over):
-    s = secrets.token_hex(6)
-    a = {"u": AU, "t": hashlib.md5((AP + s).encode()).hexdigest(), "s": s, "v": "1.16.1", "c": "conformance", "f": "json"}
-    a.update(over)
-    return {k: v for k, v in a.items() if v is not None}
+# ── Jellyfin's account rules apply ──────────────────────────────────────────
+user_ids = {u["Name"]: u["Id"] for u in jf("GET", "/Users").json()}
+def set_policy(name, **changes):
+    policy = jf("GET", f"/Users/{user_ids[name]}").json()["Policy"]
+    jf("POST", f"/Users/{user_ids[name]}/Policy", json={**policy, **changes})
 
+XU, XP, KU, KP = creds["XU"], creds["XP"], creds["KU"], creds["KP"]
+r = call("ping", auth_params=auth(u=creds["OU"], p=creds["OP"]), label="disabled account")
+record("a disabled Jellyfin account -> error 50", err(r) == 50, r, "security")
+record("extra signs in", ok(call("ping", auth_params=auth(u=XU, p=XP), label="extra signs in")))
+jf("POST", f"/Users/Password?userId={user_ids[XU]}", json={"NewPw": XP + "2"})
+r = call("ping", auth_params=auth(u=XU, p=XP), label="old password")
+record("a changed password stops working at once (not when the login cache expires)", err(r) == 40, r, "security")
+record("... and the new password works", ok(call("ping", auth_params=auth(u=XU, p=XP + "2"), label="new password")))
+set_policy(XU, IsDisabled=True)
+r = call("ping", auth_params=auth(u=XU, p=XP + "2"), label="disabled while signed in")
+record("disabling a signed-in account takes effect at once -> error 50", err(r) == 50, r, "security")
+set_policy(XU, IsDisabled=False)
+set_policy(XU, AccessSchedules=[{"DayOfWeek": "Everyday", "StartHour": 0, "EndHour": 0.5, "UserId": user_ids[XU]}])
+from datetime import datetime as _dt, timezone as _tz
+if _dt.now(_tz.utc).hour >= 1:  # allowed 00:00-00:30 server time (the container runs on UTC)
+    r = call("ping", auth_params=auth(u=XU, p=XP + "2"), label="outside schedule")
+    record("outside the account's access schedule -> error 50", err(r) == 50, r, "security")
+for i in range(3):
+    call("ping", auth_params=auth(u=KU, p="wrong"), check_schema=False, label=f"lockout attempt {i + 1}")
+r = call("ping", auth_params=auth(u=KU, p=KP), label="locked out")
+record("Jellyfin's lockout applies: 3 wrong passwords disable the account", err(r) == 50, r, "security")
+
+# ── users & roles ───────────────────────────────────────────────────────────
 r = call("getUser", {"username": SU}, label="getUser self")
 u = (r or {}).get("user", {})
 record("getUser roles follow Jellyfin permissions (non-admin)",
@@ -348,7 +411,7 @@ r = call("getUsers", label="getUsers non-admin")
 record("getUsers as non-admin -> error 50", err(r) == 50, r, "security")
 r = call("getUsers", auth_params=admin(), label="getUsers admin")
 us = (r or {}).get("users", {}).get("user", [])
-record("getUsers as admin lists every user", sorted(x.get("username") for x in us) == sorted([AU, SU])
+record("getUsers as admin lists every Jellyfin user", sorted(x.get("username") for x in us) == sorted(user_ids)
        and any(x.get("adminRole") for x in us), [(x.get("username"), x.get("adminRole")) for x in us])
 r = call("getMusicFolders", auth_params=admin(), check_schema=False, label="admin folders")
 admin_folders = (r or {}).get("musicFolders", {}).get("musicFolder", [])
@@ -371,7 +434,7 @@ if secret_song and secret_album and song_ids:
         r = call(ep, params, check_schema=False, label=f"restricted {ep}")
         record(f"{ep} of a restricted item -> error 70", err(r) == 70, r, "security")
     for ep, rid in (("stream", secret_song), ("download", secret_song), ("getCoverArt", secret_album)):
-        s = requests.get(f"{URL}/rest/{ep}", params={**auth(), "id": rid}, timeout=30, allow_redirects=False)
+        s = requests.get(f"{API}/{ep}", params={**auth(), "id": rid}, timeout=30, allow_redirects=False)
         try:
             code = s.json()["subsonic-response"]["error"]["code"]
         except Exception:
@@ -469,17 +532,15 @@ if song_ids:
 # ── base URL (Jellyfin behind a path prefix) ────────────────────────────────
 if creds.get("BASEURL") and song_ids and "Album One" in albums:
     B = creds["BASEURL"]
-    c = requests.get(f"{URL}/rest/getCoverArt", params={**auth(), "id": albums["Album One"]["id"], "size": 64}, allow_redirects=False, timeout=30)
+    c = requests.get(f"{API}/getCoverArt", params={**auth(), "id": albums["Album One"]["id"], "size": 64}, allow_redirects=False, timeout=30)
     loc = c.headers.get("location", "")
     record("getCoverArt redirect keeps the base URL and the size", c.status_code in (301, 302, 307) and loc.startswith(f"{B}/Items/") and "maxWidth=64" in loc, (c.status_code, loc))
     r = call("createShare", {"id": song_ids[0]}, check_schema=False, label="base share")
     surl = ((r or {}).get("shares", {}).get("share") or [{}])[0].get("url", "")
-    record("share URL includes the base URL", f"{B}/subfin/share/" in surl, surl)
+    record("share URL includes the base URL", f"{B}/opensubsonic/share/" in surl, surl)
     if surl:
         page = requests.get(surl, timeout=30).text
-        record("share page links include the base URL", f'href="{B}/subfin/share/' in page and f"{B}/rest/stream" in page, page[:200])
-    idx = requests.get(f"{URL}/subfin/", timeout=30).text.replace("\\u002F", "/")
-    record("device page is told the base URL", f"const BASE = '{B}'" in idx, idx[:120])
+        record("share page links include the base URL", f'href="{B}/opensubsonic/share/' in page and f"{B}/opensubsonic/rest/stream" in page, page[:200])
 
 # ── misc ─────────────────────────────────────────────────────────────────────
 call("getUser", {"username": SU})

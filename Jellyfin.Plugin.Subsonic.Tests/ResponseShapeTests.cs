@@ -29,12 +29,12 @@ public class ResponseShapeTests
     [Fact]
     public void Errors_CarryTheOpenSubsonicFields_AndHelpUrl()
     {
-        var root = Root(XmlBuilder.ErrorEnvelope(44, "Invalid API key.", "https://example/subfin/"));
+        var root = Root(XmlBuilder.ErrorEnvelope(41, "Token authentication is not supported.", "https://example/help"));
         Assert.Equal("failed", root.GetAttribute("status"));
         Assert.Equal("true", root.GetAttribute("openSubsonic"));
         Assert.NotEmpty(root.GetAttribute("type"));
         Assert.NotEmpty(root.GetAttribute("serverVersion"));
-        Assert.Equal("https://example/subfin/", root["error", Ns]!.GetAttribute("helpUrl"));
+        Assert.Equal("https://example/help", root["error", Ns]!.GetAttribute("helpUrl"));
 
         var json = SubsonicEnvelope.Error(40, "Wrong username or password.")["subsonic-response"]!;
         Assert.True((bool)json["openSubsonic"]!);
@@ -47,8 +47,9 @@ public class ResponseShapeTests
     {
         var names = Root(XmlBuilder.OpenSubsonicExtensions())["openSubsonicExtensions", Ns]!
             .ChildNodes.Cast<XmlElement>().Select(e => e.GetAttribute("name")).ToList();
-        Assert.Contains("apiKeyAuthentication", names);
         Assert.Contains("formPost", names);
+        // Logins are Jellyfin passwords; there are no API keys to hand out
+        Assert.DoesNotContain("apiKeyAuthentication", names);
         Assert.DoesNotContain("template", names);
     }
 

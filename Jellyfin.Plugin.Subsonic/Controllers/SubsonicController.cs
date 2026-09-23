@@ -19,6 +19,7 @@ using Jellyfin.Plugin.Subsonic.Auth;
 using Jellyfin.Plugin.Subsonic.Mappers;
 using Jellyfin.Plugin.Subsonic.Response;
 using Jellyfin.Plugin.Subsonic.Store;
+using MediaBrowser.Common.Net;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Dto;
 using MediaBrowser.Controller.Entities;
@@ -39,11 +40,11 @@ using Microsoft.Extensions.Primitives;
 namespace Jellyfin.Plugin.Subsonic.Controllers;
 
 /// <summary>
-/// Handles all /rest/* Subsonic API endpoints.
+/// Handles the Subsonic API at /opensubsonic/rest/*, signed in with Jellyfin usernames and passwords.
 /// Returns XML by default; JSON when f=json is in the query.
 /// </summary>
 [ApiController]
-[Route("rest")]
+[Route("opensubsonic/rest")]
 public class SubsonicController : ControllerBase
 {
     private readonly SubsonicAuth _auth;
@@ -57,6 +58,7 @@ public class SubsonicController : ControllerBase
     private readonly IAuthenticationManager _authManager;
     private readonly ILyricManager _lyricManager;
     private readonly IServerApplicationHost _appHost;
+    private readonly INetworkManager _network;
     private readonly ILogger<SubsonicController> _logger;
     private static readonly ConcurrentDictionary<string, byte> _refreshInProgress = new();
 
@@ -77,6 +79,7 @@ public class SubsonicController : ControllerBase
         IAuthenticationManager authManager,
         ILyricManager lyricManager,
         IServerApplicationHost appHost,
+        INetworkManager network,
         ILogger<SubsonicController> logger)
     {
         _auth = auth;
@@ -90,6 +93,7 @@ public class SubsonicController : ControllerBase
         _authManager = authManager;
         _lyricManager = lyricManager;
         _appHost = appHost;
+        _network = network;
         _logger = logger;
     }
 
@@ -114,36 +118,33 @@ public class SubsonicController : ControllerBase
         if (m is "getopensubsonicextensions")
             return Respond(format, HandleUnauthenticated(m));
 
-        // Auth
-        var authObj = _auth.Resolve(q);
-        if (authObj is SubsonicAuth.AuthError err)
-        {
-            // API-key errors point at the page where keys are listed and revoked
-            var helpUrl = err.Code is >= ErrorCode.AuthMechanismNotSupported and <= ErrorCode.InvalidApiKey
-                ? $"{Request.Scheme}://{Request.Host}{Request.PathBase}/subfin/"
-                : null;
-            return Respond(format, SubsonicEnvelope.Error(err.Code, err.Message, helpUrl), XmlBuilder.ErrorEnvelope(err.Code, err.Message, helpUrl));
-        }
-
-        var auth = (AuthResult)authObj;
-
-        // Share credentials are embedded in public share pages and act as the sharing user,
-        // so they may only fetch the shared tracks (stream/download check the allowlist).
-        if (auth.ShareId != null && m is not ("ping" or "getlicense" or "stream" or "download"))
-            return ErrorResponse(format, ErrorCode.NotAuthorized, "Share links can only play the shared items.");
-
-        var jellyfinUser = _userManager.GetUserById(Guid.Parse(auth.JellyfinUserId));
-        if (jellyfinUser == null)
-            return Respond(format, SubsonicEnvelope.Error(ErrorCode.WrongCredentials, "User not found."), XmlBuilder.ErrorEnvelope(ErrorCode.WrongCredentials, "User not found."));
-
         try
         {
+            var remoteIp = HttpContext.Connection.RemoteIpAddress;
+            var authObj = await _auth.ResolveAsync(q, remoteIp);
+            if (authObj is SubsonicAuth.AuthError err)
+                return ErrorResponse(format, err.Code, err.Message);
+
+            var auth = (AuthResult)authObj;
+
+            // Share credentials are embedded in public share pages and act as the sharing user,
+            // so they may only fetch the shared tracks (stream/download check the allowlist).
+            if (auth.ShareId != null && m is not ("ping" or "getlicense" or "stream" or "download"))
+                return ErrorResponse(format, ErrorCode.NotAuthorized, "Share links can only play the shared items.");
+
+            var jellyfinUser = _userManager.GetUserById(auth.UserId);
+            if (jellyfinUser == null)
+                return ErrorResponse(format, ErrorCode.WrongCredentials, "Wrong username or password.");
+            // Logins are remembered for a few minutes, so apply Jellyfin's access rules on every request
+            if (AccessRules.Denied(jellyfinUser, remoteIp, _network) is { } denied)
+                return ErrorResponse(format, ErrorCode.NotAuthorized, denied);
+
             return await HandleAuthenticated(m, auth, jellyfinUser, q, format);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[Subfin] Error handling {Method}", method);
-            return Respond(format, SubsonicEnvelope.Error(ErrorCode.Generic, "Internal server error."), XmlBuilder.ErrorEnvelope(ErrorCode.Generic, "Internal server error."));
+            return ErrorResponse(format, ErrorCode.Generic, "Internal server error.");
         }
     }
 
@@ -184,7 +185,7 @@ public class SubsonicController : ControllerBase
         return method switch
         {
             "ping" or "getlicense" => Respond(format, HandleUnauthenticated(method)),
-            "getmusicfolders" => GetMusicFolders(auth, user, format),
+            "getmusicfolders" => GetMusicFolders(user, format),
             "getartists" => GetArtists(auth, user, p, format),
             "getindexes" => GetIndexes(auth, user, p, format),
             "getartist" => GetArtist(auth, user, p, format),
@@ -210,15 +211,15 @@ public class SubsonicController : ControllerBase
             "getusers" => GetUsers(user, format),
             "getscanstatus" => GetScanStatus(format),
             "getnowplaying" => GetNowPlaying(format),
-            "saveplayqueue" => SavePlayQueue(auth, p, format),
-            "getplayqueue" => GetPlayQueue(auth, format),
+            "saveplayqueue" => SavePlayQueue(user, p, format),
+            "getplayqueue" => GetPlayQueue(user, format),
             "getshares" or "createshare" or "updateshare" or "deleteshare"
                 when SubsonicPlugin.Instance?.Configuration?.SharingEnabled == false
                 => ErrorResponse(format, ErrorCode.Generic, "Sharing is disabled."),
-            "getshares" => GetShares(auth, user, format),
-            "createshare" => CreateShare(auth, user, p, format),
-            "updateshare" => UpdateShare(auth, p, format),
-            "deleteshare" => DeleteShare(auth, p, format),
+            "getshares" => GetShares(user, format),
+            "createshare" => CreateShare(user, p, format),
+            "updateshare" => UpdateShare(user, p, format),
+            "deleteshare" => DeleteShare(user, p, format),
             "getstarred" => GetStarred(user, format, false),
             "getstarred2" => GetStarred(user, format, true),
             "getartistinfo" or "getartistinfo2" => await GetArtistInfo(auth, user, p, format, method.EndsWith("2")),
@@ -262,14 +263,9 @@ public class SubsonicController : ControllerBase
 
     // ── getMusicFolders ──────────────────────────────────────────────────────
 
-    private IActionResult GetMusicFolders(AuthResult auth, User user, string format)
+    private IActionResult GetMusicFolders(User user, string format)
     {
-        var saved = SubsonicStore.GetUserLibrarySettings(auth.SubsonicUsername);
         var musicFolders = MusicFoldersFor(user);
-
-        if (saved.Count > 0)
-            musicFolders = musicFolders.Where(f => saved.Contains(f.ItemId)).ToList();
-
         var json = SubsonicEnvelope.Ok(new()
         {
             ["musicFolders"] = new Dictionary<string, object>
@@ -303,8 +299,8 @@ public class SubsonicController : ControllerBase
     private List<(string Letter, List<(string Id, string Name, int AlbumCount)> Artists)> BuildArtistIndex(
         AuthResult auth, User user, string? musicFolderId)
     {
-        var folderIds = GetEffectiveFolderIds(auth, musicFolderId);
-        var cacheKey = $"artistIndex:{auth.JellyfinUserId}:{(folderIds == null ? "all" : string.Join(",", folderIds.OrderBy(x => x)))}";
+        var folderIds = GetEffectiveFolderIds(musicFolderId);
+        var cacheKey = $"artistIndex:{auth.UserId:N}:{(folderIds == null ? "all" : string.Join(",", folderIds.OrderBy(x => x)))}";
         const long TtlMs = 15L * 60 * 1000;
 
         var entries = GetOrRefreshCache(
@@ -365,7 +361,7 @@ public class SubsonicController : ControllerBase
         var artist = GetVisibleItem<MusicArtist>(guid);
         if (artist == null) return ErrorResponse(format, ErrorCode.NotFound, "Artist not found");
 
-        var folderIds = GetEffectiveFolderIds(auth, null);
+        var folderIds = GetEffectiveFolderIds(null);
 
         var query = new InternalItemsQuery(user)
         {
@@ -489,7 +485,7 @@ public class SubsonicController : ControllerBase
                 IncludeItemTypes = [BaseItemKind.MusicArtist],
                 Recursive = true,
             };
-            ApplyFolderScoping(folderQuery, GetEffectiveFolderIds(auth, null));
+            ApplyFolderScoping(folderQuery, GetEffectiveFolderIds(null));
             var folderEntities = _library.GetItemList(folderQuery)
               .OfType<MusicArtist>()
               .Where(a => a.ParentId != Guid.Empty && CanonicalArtistKey(a.Name ?? "") == targetKey)
@@ -546,8 +542,8 @@ public class SubsonicController : ControllerBase
 
         // Search the artist index (tag entities, file-tag names) rather than GetItemList(MusicArtist)
         // which returns folder/hierarchy entities with Jellyfin-normalized names (e.g. "B.I.G_" instead of "B.I.G.").
-        var folderIdsForSearch = GetEffectiveFolderIds(auth, null);
-        var cacheKeyForSearch = $"artistIndex:{auth.JellyfinUserId}:{(folderIdsForSearch == null ? "all" : string.Join(",", folderIdsForSearch.OrderBy(x => x)))}";
+        var folderIdsForSearch = GetEffectiveFolderIds(null);
+        var cacheKeyForSearch = $"artistIndex:{auth.UserId:N}:{(folderIdsForSearch == null ? "all" : string.Join(",", folderIdsForSearch.OrderBy(x => x)))}";
         var cachedForSearch = SubsonicStore.GetDerivedCache(cacheKeyForSearch);
         var artistIndex = cachedForSearch != null
             ? (JsonSerializer.Deserialize<List<ArtistCacheEntry>>(cachedForSearch.ValueJson) ?? [])
@@ -603,9 +599,9 @@ public class SubsonicController : ControllerBase
 
         if (type == "recent")
         {
-            var recentFolderIds = GetEffectiveFolderIds(auth, p.MusicFolderId);
+            var recentFolderIds = GetEffectiveFolderIds(p.MusicFolderId);
             var folderSuffix = recentFolderIds == null ? "all" : string.Join(",", recentFolderIds.OrderBy(x => x));
-            var cacheKey = $"albumListRecent:{auth.JellyfinUserId}:{folderSuffix}:{size}:{offset}";
+            var cacheKey = $"albumListRecent:{auth.UserId:N}:{folderSuffix}:{size}:{offset}";
             const long RecentTtlMs = 5L * 60 * 1000;
 
             var albumGuids = GetOrRefreshCache(
@@ -659,7 +655,7 @@ public class SubsonicController : ControllerBase
             query.Genres = new List<string> { p.Get("genre") ?? "" };
         }
 
-        var folderIds = GetEffectiveFolderIds(auth, p.MusicFolderId);
+        var folderIds = GetEffectiveFolderIds(p.MusicFolderId);
         ApplyFolderScoping(query, folderIds);
 
         var albums = _library.GetItemList(query).OfType<MusicAlbum>().Select(ToAlbumWithArtist).ToList();
@@ -682,7 +678,7 @@ public class SubsonicController : ControllerBase
         if (p.Get("genre") is { } genre) query.Genres = new List<string> { genre };
         if (p.Get("fromYear") != null || p.Get("toYear") != null)
             query.Years = YearRange(p.GetInt("fromYear", 0), p.GetInt("toYear", DateTime.UtcNow.Year));
-        ApplyFolderScoping(query, GetEffectiveFolderIds(auth, p.MusicFolderId));
+        ApplyFolderScoping(query, GetEffectiveFolderIds(p.MusicFolderId));
         var songs = _library.GetItemList(query).OfType<Audio>().Select(ToSongWithArtist).ToList();
 
         var json = SubsonicEnvelope.Ok(new() { ["randomSongs"] = new Dictionary<string, object> { ["song"] = songs } });
@@ -693,9 +689,9 @@ public class SubsonicController : ControllerBase
 
     private IActionResult GetGenres(AuthResult auth, User user, QueryParams p, string format)
     {
-        var folderIds = GetEffectiveFolderIds(auth, p.MusicFolderId);
+        var folderIds = GetEffectiveFolderIds(p.MusicFolderId);
         var folderSuffix = folderIds == null ? "all" : string.Join(",", folderIds.OrderBy(x => x));
-        var cacheKey = $"genres:{auth.JellyfinUserId}:{folderSuffix}";
+        var cacheKey = $"genres:{auth.UserId:N}:{folderSuffix}";
         const long TtlMs = 30L * 60 * 1000;
 
         var cached = GetOrRefreshCache(
@@ -765,7 +761,7 @@ public class SubsonicController : ControllerBase
             StartIndex = offset,
             Recursive = true,
         };
-        ApplyFolderScoping(query, GetEffectiveFolderIds(auth, p.MusicFolderId));
+        ApplyFolderScoping(query, GetEffectiveFolderIds(p.MusicFolderId));
         var songs = _library.GetItemList(query).OfType<Audio>().Select(ToSongWithArtist).ToList();
 
         var json = SubsonicEnvelope.Ok(new() { ["songsByGenre"] = new Dictionary<string, object> { ["song"] = songs } });
@@ -1038,6 +1034,19 @@ public class SubsonicController : ControllerBase
     }
 
     /// <summary>
+    /// The Jellyfin device a request plays on: one per user and Subsonic client (the <c>c</c> parameter),
+    /// so each app gets its own session in the dashboard.
+    /// </summary>
+    private (string Id, string Name) ClientDevice(AuthResult auth)
+    {
+        if (auth.ShareId != null)
+            return ($"opensubsonic-share-{auth.ShareId}", "Share link");
+        var client = _query.First("c").Trim() is { Length: > 0 } c ? c : "Subsonic client";
+        var slug = new string(client.Select(ch => char.IsAsciiLetterOrDigit(ch) ? char.ToLowerInvariant(ch) : '-').ToArray());
+        return ($"opensubsonic-{auth.UserId:N}-{slug}", client);
+    }
+
+    /// <summary>
     /// Live playback through Jellyfin's session manager: "now playing", and when finished Jellyfin
     /// counts the play, stamps it and notifies scrobbler plugins. It is the only writer of that play
     /// (writing user data here as well would race with it and lose one of the updates).
@@ -1047,13 +1056,9 @@ public class SubsonicController : ControllerBase
         try
         {
             var remoteIp = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "";
-            var clientName = _query.First("c") is { Length: > 0 } cn ? cn : (auth.JellyfinDeviceName ?? "Subfin");
+            var (deviceId, clientName) = ClientDevice(auth);
             var clientVersion = _query.First("v") is { Length: > 0 } cv ? cv : "1.0.0";
-            var session = await _sessions.LogSessionActivity(
-                clientName, clientVersion,
-                auth.JellyfinDeviceId ?? "subfin-unknown",
-                auth.JellyfinDeviceName ?? "Subfin Device",
-                remoteIp, user);
+            var session = await _sessions.LogSessionActivity(clientName, clientVersion, deviceId, clientName, remoteIp, user);
 
             await _sessions.OnPlaybackStart(new PlaybackStartInfo
             {
@@ -1134,25 +1139,25 @@ public class SubsonicController : ControllerBase
 
     // ── savePlayQueue / getPlayQueue ─────────────────────────────────────────
 
-    private IActionResult SavePlayQueue(AuthResult auth, QueryParams p, string format)
+    private IActionResult SavePlayQueue(User user, QueryParams p, string format)
     {
         var ids = _query["id"].Select(s => s ?? "").Where(s => !string.IsNullOrEmpty(s)).ToList();
         var current = p.Get("current");
         var position = p.GetLong("position", 0);
-        SubsonicStore.SavePlayQueue(auth.SubsonicUsername, ids, current, 0, position, "");
+        SubsonicStore.SavePlayQueue(user.Id.ToString("N"), ids, current, 0, position, p.Get("c") ?? "");
         return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
     }
 
-    private IActionResult GetPlayQueue(AuthResult auth, string format)
+    private IActionResult GetPlayQueue(User user, string format)
     {
-        var pq = SubsonicStore.GetPlayQueue(auth.SubsonicUsername);
+        var pq = SubsonicStore.GetPlayQueue(user.Id.ToString("N"));
         if (pq == null)
         {
             // playQueue and its username/changed/changedBy are required even when nothing was saved
             var never = DateTimeOffset.UnixEpoch.ToString("o");
             return Respond(format,
-                SubsonicEnvelope.Ok(new() { ["playQueue"] = new Dictionary<string, object> { ["username"] = auth.SubsonicUsername, ["changed"] = never, ["changedBy"] = "" } }),
-                XmlBuilder.PlayQueue(null, 0, 0, never, "", [], auth.SubsonicUsername));
+                SubsonicEnvelope.Ok(new() { ["playQueue"] = new Dictionary<string, object> { ["username"] = user.Username, ["changed"] = never, ["changedBy"] = "" } }),
+                XmlBuilder.PlayQueue(null, 0, 0, never, "", [], user.Username));
         }
 
         var songs = pq.EntryIds.Select(id =>
@@ -1168,27 +1173,27 @@ public class SubsonicController : ControllerBase
             {
                 ["current"] = pq.CurrentId ?? "",
                 ["position"] = pq.PositionMs,
-                ["username"] = auth.SubsonicUsername,
+                ["username"] = user.Username,
                 ["changed"] = pq.ChangedAt ?? DateTimeOffset.UnixEpoch.ToString("o"),
                 ["changedBy"] = pq.ChangedBy,
                 ["entry"] = songs,
             }
         });
-        return Respond(format, json, XmlBuilder.PlayQueue(pq.CurrentId, pq.CurrentIndex, pq.PositionMs, pq.ChangedAt, pq.ChangedBy, songs, auth.SubsonicUsername));
+        return Respond(format, json, XmlBuilder.PlayQueue(pq.CurrentId, pq.CurrentIndex, pq.PositionMs, pq.ChangedAt, pq.ChangedBy, songs, user.Username));
     }
 
     // ── Shares ───────────────────────────────────────────────────────────────
 
-    private IActionResult GetShares(AuthResult auth, User user, string format)
+    private IActionResult GetShares(User user, string format)
     {
-        var shares = SubsonicStore.GetSharesForUser(auth.SubsonicUsername);
+        var shares = SubsonicStore.GetSharesForUser(user.Id.ToString("N"));
         var baseUrl = $"{Request.Scheme}://{Request.Host}{Request.PathBase}";  // PathBase = Jellyfin base URL
         var xmlShares = shares.Select(s => BuildShareXml(s, baseUrl, user)).ToList();
         var json = SubsonicEnvelope.Ok(new() { ["shares"] = new Dictionary<string, object> { ["share"] = xmlShares.Select(ShareToJson).ToList() } });
         return Respond(format, json, XmlBuilder.Shares(xmlShares));
     }
 
-    private IActionResult CreateShare(AuthResult auth, User user, QueryParams p, string format)
+    private IActionResult CreateShare(User user, QueryParams p, string format)
     {
         var ids = _query["id"].Select(s => s ?? "").Where(s => !string.IsNullOrEmpty(s)).ToList();
         var desc = p.Get("description");
@@ -1197,11 +1202,6 @@ public class SubsonicController : ControllerBase
         if (!string.IsNullOrEmpty(expiresParam) && long.TryParse(expiresParam, out var ms) && ms > 0)
             expiresAt = DateTimeOffset.FromUnixTimeMilliseconds(ms).ToString("o");
 
-        // The share belongs to the device making the request (it goes away when that device is unlinked).
-        var devices = SubsonicStore.GetDevicesForUser(auth.SubsonicUsername);
-        var device = devices.FirstOrDefault(d => $"subfin-{d.Id}" == auth.JellyfinDeviceId) ?? devices.FirstOrDefault();
-        if (device == null) return ErrorResponse(format, ErrorCode.Generic, "No linked device found. Link a device first.");
-
         // Expand IDs to a flat list of audio track GUIDs the user may access.
         // Artist IDs are bare GUIDs; album IDs use al- prefix; playlist IDs use pl- prefix.
         var flatIds = LibraryQueries.ExpandShareIds(_library, user, ids);
@@ -1209,7 +1209,7 @@ public class SubsonicController : ControllerBase
 
         var secret = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24))
             .Replace("+", "-").Replace("/", "_").Replace("=", "");
-        var uid = SubsonicStore.InsertShare(device.Id, ids, flatIds, desc, expiresAt, secret);
+        var uid = SubsonicStore.InsertShare(user.Id.ToString("N"), ids, flatIds, desc, expiresAt, secret);
 
         var share = SubsonicStore.GetShare(uid)!;
         var baseUrl = $"{Request.Scheme}://{Request.Host}{Request.PathBase}";  // PathBase = Jellyfin base URL
@@ -1219,14 +1219,14 @@ public class SubsonicController : ControllerBase
     }
 
     /// <summary>Only the user who created a share may change or delete it.</summary>
-    private static bool OwnsShare(AuthResult auth, string shareUid) =>
-        SubsonicStore.GetSharesForUser(auth.SubsonicUsername).Any(s => s.ShareUid == shareUid);
+    private static bool OwnsShare(User user, string shareUid) =>
+        SubsonicStore.GetShare(shareUid)?.OwnerUserId == user.Id.ToString("N");
 
-    private IActionResult UpdateShare(AuthResult auth, QueryParams p, string format)
+    private IActionResult UpdateShare(User user, QueryParams p, string format)
     {
         var id = p.Id;
         if (string.IsNullOrEmpty(id)) return ErrorResponse(format, ErrorCode.RequiredParameterMissing, "Missing id");
-        if (!OwnsShare(auth, id)) return ErrorResponse(format, ErrorCode.NotFound, "Share not found");
+        if (!OwnsShare(user, id)) return ErrorResponse(format, ErrorCode.NotFound, "Share not found");
         var desc = p.Get("description");
         var expiresParam = p.Get("expires");
         string? expiresAt = null;
@@ -1236,11 +1236,11 @@ public class SubsonicController : ControllerBase
         return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
     }
 
-    private IActionResult DeleteShare(AuthResult auth, QueryParams p, string format)
+    private IActionResult DeleteShare(User user, QueryParams p, string format)
     {
         var id = p.Id;
         if (string.IsNullOrEmpty(id)) return ErrorResponse(format, ErrorCode.RequiredParameterMissing, "Missing id");
-        if (!OwnsShare(auth, id)) return ErrorResponse(format, ErrorCode.NotFound, "Share not found");
+        if (!OwnsShare(user, id)) return ErrorResponse(format, ErrorCode.NotFound, "Share not found");
         SubsonicStore.DeleteShare(id);
         return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
     }
@@ -1248,7 +1248,7 @@ public class SubsonicController : ControllerBase
     private ShareXml BuildShareXml(ShareRecord s, string baseUrl, User user)
     {
         var secret = SubsonicStore.GetShareSecret(s.ShareUid) ?? "";
-        var url = $"{baseUrl}/subfin/share/{s.ShareUid}?secret={Uri.EscapeDataString(secret)}";
+        var url = $"{baseUrl}/opensubsonic/share/{s.ShareUid}?secret={Uri.EscapeDataString(secret)}";
         var createdDt = DateTime.Parse(s.CreatedAt, CultureInfo.InvariantCulture,
             System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal);
         var created = createdDt.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
@@ -1801,8 +1801,8 @@ public class SubsonicController : ControllerBase
 
         var (container, audioCodec, mimeType) = MapTranscodeFormat(targetFormat);
         var qs = $"audioCodec={audioCodec}&static=false" +
-                 $"&userId={auth.JellyfinUserId}" +
-                 $"&deviceId={Uri.EscapeDataString(auth.JellyfinDeviceId ?? "subfin")}";
+                 $"&userId={auth.UserId:N}" +
+                 $"&deviceId={Uri.EscapeDataString(ClientDevice(auth).Id)}";
         if (bitRate > 0) qs += $"&audioBitRate={bitRate * 1000}";
         if (timeOff > 0) qs += $"&startTimeTicks={(long)timeOff * 10_000_000L}";
 
@@ -2038,7 +2038,8 @@ public class SubsonicController : ControllerBase
     // Scope for a musicFolderId that doesn't name an accessible library: matches nothing.
     private static readonly List<string> NoFolders = [Guid.Empty.ToString("N")];
 
-    private List<string>? GetEffectiveFolderIds(AuthResult auth, string? clientParam)
+    /// <summary>The libraries a request is scoped to; null means every library the user can see.</summary>
+    private List<string>? GetEffectiveFolderIds(string? clientParam)
     {
         if (!string.IsNullOrEmpty(clientParam))
         {
@@ -2049,8 +2050,7 @@ public class SubsonicController : ControllerBase
                 : accessible.FirstOrDefault(f => Guid.TryParse(f.ItemId, out var a) && Guid.TryParse(clientParam, out var b) && a == b);
             return match.ItemId != null ? [match.ItemId] : NoFolders;
         }
-        var saved = SubsonicStore.GetUserLibrarySettings(auth.SubsonicUsername);
-        return saved.Count == 0 ? null : saved;
+        return null;
     }
 }
 
