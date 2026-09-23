@@ -7,11 +7,11 @@
 #   Part 3 (Build)    — Plugin feature/major version
 #   Part 4 (Revision) — Plugin patch version
 #
-# Example: 10.11.3.0 → targets Jellyfin 10.11.x, plugin release 3.0
+# Example: 12.1.6.0 → targets Jellyfin 12.1.x, plugin release 6.0
 # serverVersion seen by Subsonic clients: "{Build}.{Revision}.0" (e.g. "3.0.0")
 #
 # Usage: ./scripts/bump-version.sh <NEW_VERSION>
-# Example: ./scripts/bump-version.sh 10.11.3.0
+# Example: ./scripts/bump-version.sh 12.1.6.0
 
 set -euo pipefail
 

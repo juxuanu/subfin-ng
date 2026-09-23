@@ -29,8 +29,7 @@ public static class Crypto
         if (_cachedKey != null) return _cachedKey;
         var saltBytes = Encoding.UTF8.GetBytes(KdfSalt);
         var password = Convert.FromBase64String(base64Salt);
-        using var deriv = new Rfc2898DeriveBytes(password, saltBytes, 100_000, HashAlgorithmName.SHA256);
-        _cachedKey = deriv.GetBytes(KeyLen);
+        _cachedKey = Rfc2898DeriveBytes.Pbkdf2(password, saltBytes, 100_000, HashAlgorithmName.SHA256, KeyLen);
         return _cachedKey;
     }
 

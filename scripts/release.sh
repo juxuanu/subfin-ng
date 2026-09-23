@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Cut a release: bump version, commit, tag, push → GitHub Actions handles the rest.
 # Usage: ./scripts/release.sh <version>
-# Example: ./scripts/release.sh 10.11.6.0
+# Example: ./scripts/release.sh 12.1.6.0
 
 set -euo pipefail
 
@@ -9,7 +9,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 if [ $# -lt 1 ]; then
   echo "Usage: $0 <version>"
-  echo "Example: $0 10.11.6.0"
+  echo "Example: $0 12.1.6.0"
   exit 1
 fi
 

@@ -848,7 +848,7 @@ public class SubsonicController : ControllerBase
             .ToArray();
 
         if (songIdsToAdd.Length > 0)
-            await _playlists.AddItemToPlaylistAsync(guid, songIdsToAdd, user.Id);
+            await _playlists.AddItemToPlaylistAsync(guid, songIdsToAdd, position: null, userId: user.Id);
 
         return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
     }

@@ -1,10 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>Jellyfin.Plugin.Subsonic</AssemblyName>
     <RootNamespace>Jellyfin.Plugin.Subsonic</RootNamespace>
-    <AssemblyVersion>10.11.5.7</AssemblyVersion>
-    <FileVersion>10.11.5.7</FileVersion>
+    <AssemblyVersion>12.1.6.0</AssemblyVersion>
+    <FileVersion>12.1.6.0</FileVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <Optimize>true</Optimize>
@@ -25,11 +25,11 @@
 
   <ItemGroup>
     <!-- Jellyfin SDK references — provided by the host at runtime -->
-    <PackageReference Include="Jellyfin.Controller" Version="10.11.6" />
-    <PackageReference Include="Jellyfin.Model" Version="10.11.6" />
-    <PackageReference Include="Jellyfin.Database.Implementations" Version="10.11.6" />
+    <PackageReference Include="Jellyfin.Controller" Version="12.1.0" />
+    <PackageReference Include="Jellyfin.Model" Version="12.1.0" />
+    <PackageReference Include="Jellyfin.Database.Implementations" Version="12.1.0" />
     <!-- SQLite -->
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.*" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.11" />
   </ItemGroup>
 
   <ItemGroup>

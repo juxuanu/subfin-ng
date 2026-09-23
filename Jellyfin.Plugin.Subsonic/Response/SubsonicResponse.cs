@@ -14,7 +14,7 @@ public static class SubsonicConstants
         {
             var v = SubsonicPlugin.Instance?.Version;
             if (v == null) return "0.0.0";
-            // Parts 1-2 (Major/Minor) encode the Jellyfin target (e.g. 10.11).
+            // Parts 1-2 (Major/Minor) encode the Jellyfin target (e.g. 12.1).
             // Parts 3-4 (Build/Revision) are the plugin version exposed to Subsonic clients.
             return $"{v.Build}.{v.Revision}.0";
         }
