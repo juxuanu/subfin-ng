@@ -30,7 +30,8 @@ Requirements: `podman`, `ffmpeg`, `jq`, `curl`, `git`, the .NET 10 SDK and
   library by id, can't read or change other users' private playlists and shares,
   and that share links only reach the shared songs.
 - **Authentication** – token, password, `enc:` password and API-key logins,
-  including the error codes for conflicting or invalid credentials.
+  including the error codes for conflicting or invalid credentials, sent in the
+  query string or as a form `POST`.
 
 Online metadata providers are disabled, so results depend only on the files.
 

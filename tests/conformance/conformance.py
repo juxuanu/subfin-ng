@@ -120,6 +120,15 @@ record("advertised extensions are real spec extensions", set(names) <= known, f"
 r = call("ping", auth_params={"apiKey": SP, "v": "1.16.1", "c": "conformance", "f": "json"}, check_schema=False, label="apikey-only")
 record("apiKey without u (apiKeyAuthentication semantics)", ok(r) or err(r) == 42, r, "spec")
 
+# formPost: parameters in an application/x-www-form-urlencoded body
+x = requests.post(f"{URL}/rest/ping.view", data=auth(), timeout=30)
+record("formPost: credentials in the form body", x.ok and x.json().get("subsonic-response", {}).get("status") == "ok", x.text[:200], "spec")
+x = requests.post(f"{URL}/rest/getAlbumList2", params={"f": "json"}, data={**auth(f=None), "type": "alphabeticalByName", "size": 50}, timeout=30)
+got = sorted(a["name"] for a in x.json().get("subsonic-response", {}).get("albumList2", {}).get("album", [])) if x.ok else x.text[:200]
+record("formPost: query string and body combine", got == ["Album One", "Compilation", "Double Album", "Ünïcode Album"], got, "spec")
+x = requests.post(f"{URL}/rest/ping", params={"u": "nobody"}, data=auth(), timeout=30)
+record("formPost: a key in both takes the body's value", x.ok and x.json().get("subsonic-response", {}).get("status") == "ok", x.text[:200], "spec")
+
 x = requests.get(f"{URL}/rest/ping", params={**auth(), "f": "xml"}, timeout=30)
 try:
     root = ET.fromstring(x.content)

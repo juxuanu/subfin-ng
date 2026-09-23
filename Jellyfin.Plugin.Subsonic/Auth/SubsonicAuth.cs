@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using Jellyfin.Plugin.Subsonic.Controllers;
 using Jellyfin.Plugin.Subsonic.Store;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Http;
@@ -37,11 +38,11 @@ public class SubsonicAuth
     /// <summary>Resolve auth from query params. Returns AuthResult on success, AuthError on failure.</summary>
     public object Resolve(IQueryCollection query)
     {
-        var u = query["u"].ToString().Trim();
-        var p = query["p"].ToString();
-        var t = query["t"].ToString();
-        var s = query["s"].ToString();
-        var apiKey = query["apiKey"].ToString();
+        var u = query.First("u").Trim();
+        var p = query.First("p");
+        var t = query.First("t");
+        var s = query.First("s");
+        var apiKey = query.First("apiKey");
 
         // OpenSubsonic apiKeyAuthentication: the key alone identifies the user (a device's app
         // password); sending it together with any other credential is an error.

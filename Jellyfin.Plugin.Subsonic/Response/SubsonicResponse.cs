@@ -25,6 +25,7 @@ public static class SubsonicConstants
     public static readonly (string Name, int[] Versions)[] Extensions =
     [
         ("apiKeyAuthentication", [1]),
+        ("formPost", [1]),
         ("transcodeOffset", [1]),
         ("songLyrics", [1]),
     ];

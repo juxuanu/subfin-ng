@@ -31,8 +31,10 @@ using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Querying;
 using MediaBrowser.Model.Session;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Primitives;
 
 namespace Jellyfin.Plugin.Subsonic.Controllers;
 
@@ -58,8 +60,10 @@ public class SubsonicController : ControllerBase
     private readonly ILogger<SubsonicController> _logger;
     private static readonly ConcurrentDictionary<string, byte> _refreshInProgress = new();
 
-    // Controllers are created per request, so this is the authenticated user of the current call.
+    // Controllers are created per request, so these are the authenticated user of the current call
+    // and its parameters (query string plus, for POST, the form body).
     private User? _currentUser;
+    private IQueryCollection _query = QueryCollection.Empty;
 
     public SubsonicController(
         SubsonicAuth auth,
@@ -97,8 +101,8 @@ public class SubsonicController : ControllerBase
     [HttpPost("{method}.view")]
     public async Task<IActionResult> Handle(string method)
     {
-        var q = Request.Query;
-        var format = q["f"].ToString().ToLowerInvariant() == "json" ? "json" : "xml";
+        var q = _query = await ReadParametersAsync();
+        var format = q.First("f").ToLowerInvariant() == "json" ? "json" : "xml";
 
         var config = SubsonicPlugin.Instance?.Configuration;
         if (config?.LogRestRequests == true)
@@ -143,6 +147,23 @@ public class SubsonicController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// The request's parameters: the query string, plus the form body of POST requests (the formPost
+    /// extension). A key sent both ways keeps the body's values first, so single-valued parameters
+    /// take the body's value.
+    /// </summary>
+    private async Task<IQueryCollection> ReadParametersAsync()
+    {
+        if (!HttpMethods.IsPost(Request.Method) || !Request.HasFormContentType)
+            return Request.Query;
+        var form = await Request.ReadFormAsync(HttpContext.RequestAborted);
+        var merged = new Dictionary<string, StringValues>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in form) merged[key] = value;
+        foreach (var (key, value) in Request.Query)
+            merged[key] = merged.TryGetValue(key, out var fromBody) ? StringValues.Concat(fromBody, value) : value;
+        return new QueryCollection(merged);
+    }
+
     // ── Unauthenticated ──────────────────────────────────────────────────────
 
     private static (JsonObject Json, string Xml) HandleUnauthenticated(string method) => method switch
@@ -155,7 +176,7 @@ public class SubsonicController : ControllerBase
 
     // ── Authenticated dispatch ───────────────────────────────────────────────
 
-    private async Task<IActionResult> HandleAuthenticated(string method, AuthResult auth, User user, Microsoft.AspNetCore.Http.IQueryCollection q, string format)
+    private async Task<IActionResult> HandleAuthenticated(string method, AuthResult auth, User user, IQueryCollection q, string format)
     {
         var p = new QueryParams(q);
         _currentUser = user;
@@ -824,7 +845,7 @@ public class SubsonicController : ControllerBase
 
     private async Task<IActionResult> CreatePlaylist(User user, QueryParams p, string format)
     {
-        var songs = VisibleSongs(Request.Query["songId"]);
+        var songs = VisibleSongs(_query["songId"]);
         Playlist? pl;
 
         if (p.Get("playlistId") is { } playlistId)
@@ -878,11 +899,11 @@ public class SubsonicController : ControllerBase
             pl.OpenAccess = string.Equals(isPublic, "true", StringComparison.OrdinalIgnoreCase);
         }
         if (p.Get("name") is { } name) pl.Name = name;
-        if (Request.Query.ContainsKey("comment")) pl.Overview = p.Get("comment");
+        if (_query.ContainsKey("comment")) pl.Overview = p.Get("comment");
 
         // songIndexToRemove indexes the entries this user sees (as returned by getPlaylist);
         // entries hidden from them are left alone.
-        var toRemove = Request.Query["songIndexToRemove"]
+        var toRemove = _query["songIndexToRemove"]
             .Select(s => int.TryParse(s, out var i) ? i : -1)
             .ToHashSet();
         var kept = new List<LinkedChild>();
@@ -892,7 +913,7 @@ public class SubsonicController : ControllerBase
             if (song != null && toRemove.Contains(visibleIndex++)) continue;
             kept.Add(child);
         }
-        var added = VisibleSongs(Request.Query["songIdToAdd"]);
+        var added = VisibleSongs(_query["songIdToAdd"]);
         kept.AddRange(added.Select(LinkedChild.Create));
 
         await SavePlaylistAsync(pl, kept, added: added.Count > 0);
@@ -934,7 +955,7 @@ public class SubsonicController : ControllerBase
 
     private IActionResult Star(User user, QueryParams p, string format, bool star)
     {
-        var ids = Request.Query["id"].Concat(Request.Query["albumId"]).Concat(Request.Query["artistId"])
+        var ids = _query["id"].Concat(_query["albumId"]).Concat(_query["artistId"])
             .Select(s => s ?? "").Where(s => !string.IsNullOrEmpty(s)).ToList();
 
         foreach (var id in ids)
@@ -975,9 +996,9 @@ public class SubsonicController : ControllerBase
     private async Task<IActionResult> Scrobble(AuthResult auth, User user, QueryParams p, string format)
     {
         // Several id parameters (each with its own time) submit a batch, e.g. plays queued offline.
-        var ids = Request.Query["id"];
-        var times = Request.Query["time"];
-        var isSubmission = !string.Equals(Request.Query["submission"].ToString(), "false", StringComparison.OrdinalIgnoreCase);
+        var ids = _query["id"];
+        var times = _query["time"];
+        var isSubmission = !string.Equals(_query.First("submission"), "false", StringComparison.OrdinalIgnoreCase);
 
         for (var i = 0; i < ids.Count; i++)
         {
@@ -1026,8 +1047,8 @@ public class SubsonicController : ControllerBase
         try
         {
             var remoteIp = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "";
-            var clientName = Request.Query["c"].ToString() is { Length: > 0 } cn ? cn : (auth.JellyfinDeviceName ?? "Subfin");
-            var clientVersion = Request.Query["v"].ToString() is { Length: > 0 } cv ? cv : "1.0.0";
+            var clientName = _query.First("c") is { Length: > 0 } cn ? cn : (auth.JellyfinDeviceName ?? "Subfin");
+            var clientVersion = _query.First("v") is { Length: > 0 } cv ? cv : "1.0.0";
             var session = await _sessions.LogSessionActivity(
                 clientName, clientVersion,
                 auth.JellyfinDeviceId ?? "subfin-unknown",
@@ -1115,7 +1136,7 @@ public class SubsonicController : ControllerBase
 
     private IActionResult SavePlayQueue(AuthResult auth, QueryParams p, string format)
     {
-        var ids = Request.Query["id"].Select(s => s ?? "").Where(s => !string.IsNullOrEmpty(s)).ToList();
+        var ids = _query["id"].Select(s => s ?? "").Where(s => !string.IsNullOrEmpty(s)).ToList();
         var current = p.Get("current");
         var position = p.GetLong("position", 0);
         SubsonicStore.SavePlayQueue(auth.SubsonicUsername, ids, current, 0, position, "");
@@ -1169,7 +1190,7 @@ public class SubsonicController : ControllerBase
 
     private IActionResult CreateShare(AuthResult auth, User user, QueryParams p, string format)
     {
-        var ids = Request.Query["id"].Select(s => s ?? "").Where(s => !string.IsNullOrEmpty(s)).ToList();
+        var ids = _query["id"].Select(s => s ?? "").Where(s => !string.IsNullOrEmpty(s)).ToList();
         var desc = p.Get("description");
         var expiresParam = p.Get("expires");
         string? expiresAt = null;
@@ -2036,14 +2057,23 @@ public class SubsonicController : ControllerBase
 /// <summary>Thin wrapper over IQueryCollection for convenient param extraction.</summary>
 public class QueryParams
 {
-    private readonly Microsoft.AspNetCore.Http.IQueryCollection _q;
-    public QueryParams(Microsoft.AspNetCore.Http.IQueryCollection q) => _q = q;
+    private readonly IQueryCollection _q;
+    public QueryParams(IQueryCollection q) => _q = q;
     public string? Id => Get("id") ?? Get("playlistId");
     public string? MusicFolderId => Get("musicFolderId");
     public string? Format => Get("format");
     public int MaxBitRate => GetInt("maxBitRate", 0) > 0 ? GetInt("maxBitRate", 0) : GetInt("bitRate", 0);
     public int TimeOffset => GetInt("timeOffset", 0);
-    public string? Get(string key) { var v = _q[key].ToString(); return string.IsNullOrEmpty(v) ? null : v; }
-    public int GetInt(string key, int def) => int.TryParse(_q[key], out var v) ? v : def;
-    public long GetLong(string key, long def) => long.TryParse(_q[key], out var v) ? v : def;
+    public string? Get(string key) { var v = _q.First(key); return string.IsNullOrEmpty(v) ? null : v; }
+    public int GetInt(string key, int def) => int.TryParse(_q.First(key), out var v) ? v : def;
+    public long GetLong(string key, long def) => long.TryParse(_q.First(key), out var v) ? v : def;
+}
+
+public static class QueryCollectionExtensions
+{
+    /// <summary>
+    /// A single-valued parameter: its first value, or "" (a repeated key would otherwise read as
+    /// its values joined with commas).
+    /// </summary>
+    public static string First(this IQueryCollection q, string key) => q[key] is { Count: > 0 } v ? v[0] ?? "" : "";
 }
