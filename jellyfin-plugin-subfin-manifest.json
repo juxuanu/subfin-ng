@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/juxuanu/subfin-plugin/main/logo.png",
     "versions": [
       {
+        "version": "12.1.8.9",
+        "changelog": "- fix: starred artists carry their album count and cover, as in getArtists",
+        "targetAbi": "12.1.0.0",
+        "sourceUrl": "https://github.com/juxuanu/subfin-plugin/releases/download/v12.1.8.9/jellyfin-plugin-subfin_12.1.8.9.zip",
+        "checksum": "5237920c4f7568d404e14d7371fb3c83",
+        "timestamp": "2026-09-24T19:02:24Z"
+      },
+      {
         "version": "12.1.8.8",
         "changelog": "- perf: album and song lists look up what they need per list, not per item\n- perf: drop the cache, look up artists in one query, add performance budgets",
         "targetAbi": "12.1.0.0",
