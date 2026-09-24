@@ -22,6 +22,7 @@ using MediaBrowser.Controller.Security;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Session;
+using MediaBrowser.Model.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -49,6 +50,7 @@ public class SubsonicController(
     IServerApplicationHost appHost,
     INetworkManager network,
     ISimilarItemsManager similarItems,
+    ITaskManager taskManager,
     ILogger<SubsonicController> logger)
     : ControllerBase
 {
@@ -173,7 +175,8 @@ public class SubsonicController(
             "scrobble" => await Scrobble(auth, user, format),
             "getuser" => GetUser(user, p, format),
             "getusers" => GetUsers(user, format),
-            "getscanstatus" => GetScanStatus(format),
+            "getscanstatus" => GetScanStatus(user, format),
+            "startscan" => await StartScan(user, format),
             "getnowplaying" => GetNowPlaying(format),
             "saveplayqueue" => SavePlayQueue(user, p, format),
             "getplayqueue" => GetPlayQueue(user, format),
@@ -1242,13 +1245,37 @@ public class SubsonicController(
         ["folder"] = MusicFoldersFor(u).Select(f => FolderIdToInt(f.ItemId)).ToList(),
     };
 
-    // ── getScanStatus ────────────────────────────────────────────────────────
+    // ── startScan / getScanStatus ────────────────────────────────────────────
 
-    private static IActionResult GetScanStatus(string format)
+    // Jellyfin's "Scan media library" task, which the dashboard's "Scan All Libraries" runs
+    private IScheduledTaskWorker? LibraryScan => taskManager.ScheduledTasks.FirstOrDefault(t => t.ScheduledTask.Key == "RefreshLibrary");
+
+    private async Task<IActionResult> StartScan(User user, string format)
     {
+        // Jellyfin only lets administrators scan libraries
+        if (!user.HasPermission(PermissionKind.IsAdministrator))
+            return ErrorResponse(format, ErrorCode.NotAuthorized, "Only administrators can scan the library.");
+
+        if (LibraryScan is { State: TaskState.Idle } scan)
+        {
+            taskManager.QueueScheduledTask(scan.ScheduledTask, new TaskOptions());
+            // The task starts on another thread: answer once it has, as clients stop polling getScanStatus when it isn't running
+            for (var i = 0; i < 20 && scan.State == TaskState.Idle; i++) await Task.Delay(50);
+        }
+        return GetScanStatus(user, format);
+    }
+
+    private IActionResult GetScanStatus(User user, string format)
+    {
+        // The user's songs, which grow as a scan finds new ones (Tempus shows "counting N tracks").
+        // One count query: clients poll this without pause while a scan runs.
+        var songs = new InternalItemsQuery(user) { IncludeItemTypes = [BaseItemKind.Audio], Recursive = true };
+        ApplyFolderScoping(songs, GetEffectiveFolderIds(null));
+        var (scanning, count) = (LibraryScan?.State is TaskState.Running or TaskState.Cancelling, library.GetCount(songs));
+
         var json = SubsonicEnvelope.Ok(new()
-        { ["scanStatus"] = new Dictionary<string, object> { ["scanning"] = false, ["count"] = 0 } });
-        return Respond(format, json, XmlBuilder.ScanStatus);
+        { ["scanStatus"] = new Dictionary<string, object> { ["scanning"] = scanning, ["count"] = count } });
+        return Respond(format, json, () => XmlBuilder.ScanStatus(scanning, count));
     }
 
     // ── getArtistInfo / getArtistInfo2 ───────────────────────────────────────

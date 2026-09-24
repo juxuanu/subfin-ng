@@ -56,6 +56,7 @@ CASES = [
     ("getRandomSongs", {"size": 500}, 0.5),
     ("search3", {"query": "", "artistCount": 500, "albumCount": 500, "songCount": 500}, 2.0),  # clients' full sync
     ("search3", {"query": "Artist 01"}, 1.0),
+    ("getScanStatus", {}, 0.2),  # clients poll it without pause while a scan runs
 ]
 
 results, over = [], []

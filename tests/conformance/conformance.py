@@ -1022,9 +1022,25 @@ if creds.get("BASEURL") and song_ids and "Album One" in albums:
     record("getAvatar redirect keeps the base URL", a.status_code in (301, 302, 307) and a.headers.get("location", "").startswith(f"{B}/"),
            (a.status_code, a.headers.get("location")))
 
+# ── library scan: Jellyfin's "Scan media library" task, for administrators only ──
+r = call("startScan", check_schema=False, label="startScan (not an administrator)")
+record("startScan is for administrators (error 50)", err(r) == 50, r)
+before = time.time() - 1
+r = call("startScan", auth_params=admin())
+scans = [(r or {}).get("scanStatus", {})]
+while scans[-1].get("scanning") and len(scans) < 240:  # clients poll until it ends
+    time.sleep(0.5)
+    scans.append((call("getScanStatus", auth_params=admin(), check_schema=False, label="getScanStatus while scanning") or {}).get("scanStatus", {}))
+last = next((t.get("LastExecutionResult") or {} for t in jf("GET", "/ScheduledTasks").json() if t.get("Key") == "RefreshLibrary"), {})
+record("startScan runs Jellyfin's library scan, and getScanStatus shows it until it ends",
+       ok(r) and scans[0].get("scanning") is True and scans[-1].get("scanning") is False and seconds(last.get("StartTimeUtc")) >= before,
+       (scans[0], scans[-1], len(scans), last.get("StartTimeUtc")))
+songs = (call("search3", {"query": "", "songCount": 500, "artistCount": 0, "albumCount": 0}, check_schema=False, label="every song") or {}).get("searchResult3", {}).get("song", [])
+st = (call("getScanStatus") or {}).get("scanStatus", {})
+record("getScanStatus counts the user's songs", st == {"scanning": False, "count": len(songs)} and len(songs) > 0, (st, len(songs)))
+
 # ── misc ─────────────────────────────────────────────────────────────────────
 call("getUser", {"username": SU})
-call("getScanStatus")
 call("getNowPlaying")
 if test_artist:
     call("getArtistInfo", {"id": test_artist["id"]})

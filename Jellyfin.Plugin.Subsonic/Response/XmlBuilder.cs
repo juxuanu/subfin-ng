@@ -95,11 +95,11 @@ public static class XmlBuilder
 
     public static string Ping() => OkEnvelope(_ => { });
 
-    public static string ScanStatus() => OkEnvelope(w =>
+    public static string ScanStatus(bool scanning, int count) => OkEnvelope(w =>
     {
         w.WriteStartElement("scanStatus", Ns);
-        w.WriteAttributeString("scanning", "false");
-        w.WriteAttributeString("count", "0");
+        w.WriteAttributeString("scanning", scanning ? "true" : "false");
+        w.WriteAttributeString("count", count.ToString(CultureInfo.InvariantCulture));
         w.WriteEndElement();
     });
 
