@@ -245,10 +245,12 @@ public class SubsonicController : ControllerBase
     /// <summary>
     /// Resolves an artist name to the tag/index entity ID (the one AlbumArtistIds queries match).
     /// Never use album.MusicArtist?.Id — that's the folder-hierarchy entity and won't match.
+    /// Artist ids are the bare GUID everywhere, as in getArtists: clients look artists up by the
+    /// artistId of albums and songs among the ones getArtists returned.
     /// </summary>
     private string? ResolveArtistTagId(string? name) =>
         string.IsNullOrEmpty(name) ? null :
-        _library.GetArtist(name) is MusicArtist a ? $"ar-{a.Id:N}" : null;
+        _library.GetArtist(name) is MusicArtist a ? a.Id.ToString("N") : null;
 
     // ── Response helper ──────────────────────────────────────────────────────
 
@@ -418,7 +420,7 @@ public class SubsonicController : ControllerBase
                 .ToList();
         }
 
-        var artistId = $"ar-{artist.Id:N}";
+        var artistId = artist.Id.ToString("N");
         var mapped = ItemMapper.ToArtistWithAlbums(artist, albums, a => ItemMapper.ToAlbumShort(a, artistId, UserDataFor(a), StarredAt(a)));
         var json = SubsonicEnvelope.Ok(new() { ["artist"] = mapped });
         return Respond(format, json, () => XmlBuilder.Artist(mapped));
@@ -1405,7 +1407,7 @@ public class SubsonicController : ControllerBase
                 if (similar == null) continue;
                 similarArtistDicts.Add(new Dictionary<string, object?>
                 {
-                    ["id"] = $"ar-{similar.Id:N}",
+                    ["id"] = similar.Id.ToString("N"),
                     ["name"] = similar.Name ?? name,
                     ["albumCount"] = 0,
                 });

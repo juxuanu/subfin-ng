@@ -200,6 +200,17 @@ for a in (r or {}).get("albumList2", {}).get("album", []):
     albums[a["name"]] = a
 record("getAlbumList2 alphabeticalByName returns the 4 albums",
        sorted(albums) == ["Album One", "Compilation", "Double Album", "Ünïcode Album"], sorted(albums))
+# Clients keep the getArtists list and open an artist by an album's or song's artistId
+artist_ids = {a["id"] for a in artists}
+album_artist_ids = {a["name"]: a.get("artistId") for a in albums.values()}
+record("every album's artistId is an artist from getArtists", all(i in artist_ids for i in album_artist_ids.values()),
+       (album_artist_ids, sorted(artist_ids)))
+if "Album One" in albums:
+    one_songs = call("getAlbum", {"id": albums["Album One"]["id"]}, check_schema=False, label="artist ids of songs").get("album", {}).get("song", [])
+    record("songs by an album artist carry that artist's getArtists id",
+           bool(one_songs) and all(x.get("artistId") == album_artist_ids["Album One"] for x in one_songs), [x.get("artistId") for x in one_songs])
+    r = call("getArtist", {"id": album_artist_ids["Album One"]}, check_schema=False, label="artist from an album")
+    record("getArtist opens the artist by an album's artistId", ok(r) and r.get("artist", {}).get("name") == "Test Artist", r)
 for t, extra in [("newest", {}), ("alphabeticalByArtist", {}), ("random", {}), ("highest", {}), ("frequent", {}),
                  ("recent", {}), ("starred", {}), ("byYear", {"fromYear": 2000, "toYear": 2006}), ("byGenre", {"genre": "Jazz"})]:
     r = call("getAlbumList2", {"type": t, **extra}, label=f"getAlbumList2 type={t}")
