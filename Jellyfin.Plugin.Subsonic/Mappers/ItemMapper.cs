@@ -91,8 +91,9 @@ public static class ItemMapper
     // ── Album ────────────────────────────────────────────────────────────────
 
     /// <param name="artistIdOf">Artist name to id, for the OpenSubsonic artists list; without it the list is left out.</param>
+    /// <param name="songCount">Counted beforehand for a whole list; otherwise the album's songs are loaded to count them.</param>
     public static Dictionary<string, object?> ToAlbumShort(MusicAlbum album, string? resolvedArtistId = null, UserItemData? userData = null, string? starredAt = null,
-        Func<string, string?>? artistIdOf = null)
+        Func<string, string?>? artistIdOf = null, int? songCount = null)
     {
         var artistName = album.AlbumArtist ?? album.AlbumArtists.FirstOrDefault() ?? "";
         var result = new Dictionary<string, object?>
@@ -106,7 +107,7 @@ public static class ItemMapper
             ["parent"] = resolvedArtistId ?? "",
             ["isDir"] = true,
             ["coverArt"] = $"al-{album.Id:N}",
-            ["songCount"] = album.Tracks.Count(),
+            ["songCount"] = songCount ?? album.Tracks.Count(),
             ["duration"] = TicksToSeconds(album.RunTimeTicks),
             ["playCount"] = 0,
             ["artist"] = artistName,

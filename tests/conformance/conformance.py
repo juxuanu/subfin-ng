@@ -203,6 +203,9 @@ for a in (r or {}).get("albumList2", {}).get("album", []):
     albums[a["name"]] = a
 record("getAlbumList2 alphabeticalByName returns the 4 albums",
        sorted(albums) == ["Album One", "Compilation", "Double Album", "Ünïcode Album"], sorted(albums))
+counts = {n: a.get("songCount") for n, a in albums.items()}
+record("album lists count each album's songs (a two-disc album's too)",
+       counts == {"Album One": 3, "Compilation": 2, "Double Album": 4, "Ünïcode Album": 1}, counts)
 # Clients keep the getArtists list and open an artist by an album's or song's artistId
 artist_ids = {a["id"] for a in artists}
 album_artist_ids = {a["name"]: a.get("artistId") for a in albums.values()}

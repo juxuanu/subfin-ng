@@ -324,11 +324,12 @@ public class SubsonicController(
         var artist = GetVisibleItem<MusicArtist>(guid);
         if (artist == null) return ErrorResponse(format, ErrorCode.NotFound, "Artist not found");
 
-        var albums = ArtistAlbums(user, artist);
+        var albums = Prefetch(ArtistAlbums(user, artist));
         logger.LogInformation("[Subfin] getArtist {Name} (guid={Guid}): {Count} albums", artist.Name, guid, albums.Count);
 
         var artistId = artist.Id.ToString("N");
-        var mapped = ItemMapper.ToArtistWithAlbums(artist, albums, a => ItemMapper.AsAlbumId3(ItemMapper.ToAlbumShort(a, artistId, UserDataFor(a), StarredAt(a), ArtistIdOf)),
+        var mapped = ItemMapper.ToArtistWithAlbums(artist, albums, a => ItemMapper.AsAlbumId3(ItemMapper.ToAlbumShort(a, artistId, UserDataFor(a), StarredAt(a), ArtistIdOf,
+                _songCounts.TryGetValue(a.Id, out var n) ? n : null)),
             ArtistStarred(artistId));
         var json = SubsonicEnvelope.Ok(new() { ["artist"] = mapped });
         return Respond(format, json, () => XmlBuilder.Artist(mapped));
@@ -344,7 +345,7 @@ public class SubsonicController(
         var album = GetVisibleItem<MusicAlbum>(guid);
         if (album == null) return ErrorResponse(format, ErrorCode.NotFound, "Album not found");
 
-        var songs = AlbumTracks(user, guid);
+        var songs = Prefetch(AlbumTracks(user, guid));
 
         var resolvedArtistId = ResolveArtistTagId(album.AlbumArtist ?? album.AlbumArtists.FirstOrDefault());
         var mapped = ItemMapper.ToAlbum(album, songs, s => ToAlbumSong(s, album), resolvedArtistId, UserDataFor(album), artistIdOf: ArtistIdOf);
@@ -422,6 +423,8 @@ public class SubsonicController(
             }
         }
 
+        Prefetch(children.OfType<MusicAlbum>());
+        Prefetch(children.OfType<Audio>());
         var childMaps = children.Select(c => c switch
         {
             MusicAlbum album => ToAlbumWithArtist(album),
@@ -464,23 +467,23 @@ public class SubsonicController(
             .Select(a => ItemMapper.ToIndexArtist(a.Id, a.Name, a.AlbumCount, ArtistStarred(a.Id)))
             .ToList();
 
-        var albums = library.GetItemList(new InternalItemsQuery(user)
+        var albums = Prefetch(library.GetItemList(new InternalItemsQuery(user)
         {
             SearchTerm = query,
             IncludeItemTypes = [BaseItemKind.MusicAlbum],
             Limit = albumCount,
             StartIndex = albumOffset,
             Recursive = true,
-        }).OfType<MusicAlbum>().Select(a => search2 ? ToAlbumWithArtist(a) : ToAlbumId3WithArtist(a)).ToList();
+        }).OfType<MusicAlbum>()).Select(a => search2 ? ToAlbumWithArtist(a) : ToAlbumId3WithArtist(a)).ToList();
 
-        var songs = library.GetItemList(new InternalItemsQuery(user)
+        var songs = SongList(library.GetItemList(new InternalItemsQuery(user)
         {
             SearchTerm = query,
             IncludeItemTypes = [BaseItemKind.Audio],
             Limit = songCount,
             StartIndex = songOffset,
             Recursive = true,
-        }).OfType<Audio>().Select(ToSongWithArtist).ToList();
+        }));
 
         var element = search2 ? "searchResult2" : "searchResult3";
         var json = SubsonicEnvelope.Ok(new()
@@ -506,7 +509,7 @@ public class SubsonicController(
 
         if (type == "recent")
         {
-            var recentAlbums = RecentAlbums(user, GetEffectiveFolderIds(p.MusicFolderId), offset, size).Select(toAlbum).ToList();
+            var recentAlbums = Prefetch(RecentAlbums(user, GetEffectiveFolderIds(p.MusicFolderId), offset, size)).Select(toAlbum).ToList();
 
             var recentJson = SubsonicEnvelope.Ok(new() { [v2 ? "albumList2" : "albumList"] = new Dictionary<string, object> { ["album"] = recentAlbums } });
             return Respond(format, recentJson, () => XmlBuilder.AlbumList(recentAlbums, v2));
@@ -549,7 +552,7 @@ public class SubsonicController(
         var folderIds = GetEffectiveFolderIds(p.MusicFolderId);
         ApplyFolderScoping(query, folderIds);
 
-        var albums = library.GetItemList(query).OfType<MusicAlbum>().Select(toAlbum).ToList();
+        var albums = Prefetch(library.GetItemList(query).OfType<MusicAlbum>()).Select(toAlbum).ToList();
         var json = SubsonicEnvelope.Ok(new() { [v2 ? "albumList2" : "albumList"] = new Dictionary<string, object> { ["album"] = albums } });
         return Respond(format, json, () => XmlBuilder.AlbumList(albums, v2));
     }
@@ -570,7 +573,7 @@ public class SubsonicController(
         if (p.Get("fromYear") != null || p.Get("toYear") != null)
             query.Years = YearRange(p.GetInt("fromYear", 0), p.GetInt("toYear", DateTime.UtcNow.Year));
         ApplyFolderScoping(query, GetEffectiveFolderIds(p.MusicFolderId));
-        var songs = library.GetItemList(query).OfType<Audio>().Select(ToSongWithArtist).ToList();
+        var songs = SongList(library.GetItemList(query));
 
         var json = SubsonicEnvelope.Ok(new() { ["randomSongs"] = new Dictionary<string, object> { ["song"] = songs } });
         return Respond(format, json, () => XmlBuilder.RandomSongs(songs));
@@ -621,7 +624,7 @@ public class SubsonicController(
             Recursive = true,
         };
         ApplyFolderScoping(query, GetEffectiveFolderIds(p.MusicFolderId));
-        var songs = library.GetItemList(query).OfType<Audio>().Select(ToSongWithArtist).ToList();
+        var songs = SongList(library.GetItemList(query));
 
         var json = SubsonicEnvelope.Ok(new() { ["songsByGenre"] = new Dictionary<string, object> { ["song"] = songs } });
         return Respond(format, json, () => XmlBuilder.SongsByGenre(songs));
@@ -692,7 +695,7 @@ public class SubsonicController(
             ["created"] = pl.DateCreated.ToString("o"),
             ["changed"] = (changed == default ? pl.DateCreated : changed).ToString("o"),
             ["coverArt"] = $"pl-{pl.Id:N}",
-            ["entry"] = includeSongs ? songs.Select(ToSongWithArtist).ToList() : new List<Dictionary<string, object?>>(),
+            ["entry"] = includeSongs ? SongList(songs) : new List<Dictionary<string, object?>>(),
         };
     }
 
@@ -1170,12 +1173,11 @@ public class SubsonicController(
         var artists = library.GetItemList(new InternalItemsQuery(user)
         { IncludeItemTypes = [BaseItemKind.MusicArtist], IsFavorite = true, Recursive = true })
             .OfType<MusicArtist>().Select(a => new Dictionary<string, object?> { ["id"] = a.Id.ToString("N"), ["name"] = a.Name ?? "", ["starred"] = StarredAt(a) ?? a.DateCreated.ToString("o") }).ToList();
-        var albums = library.GetItemList(new InternalItemsQuery(user)
-        { IncludeItemTypes = [BaseItemKind.MusicAlbum], IsFavorite = true, Recursive = true })
-            .OfType<MusicAlbum>().Select(a => v2 ? ToAlbumId3WithArtist(a) : ToAlbumWithArtist(a)).ToList();
-        var songs = library.GetItemList(new InternalItemsQuery(user)
-        { IncludeItemTypes = [BaseItemKind.Audio], IsFavorite = true, Recursive = true })
-            .OfType<Audio>().Select(ToSongWithArtist).ToList();
+        var albums = Prefetch(library.GetItemList(new InternalItemsQuery(user)
+        { IncludeItemTypes = [BaseItemKind.MusicAlbum], IsFavorite = true, Recursive = true }).OfType<MusicAlbum>())
+            .Select(a => v2 ? ToAlbumId3WithArtist(a) : ToAlbumWithArtist(a)).ToList();
+        var songs = SongList(library.GetItemList(new InternalItemsQuery(user)
+            { IncludeItemTypes = [BaseItemKind.Audio], IsFavorite = true, Recursive = true }));
 
         var json = SubsonicEnvelope.Ok(new()
         {
@@ -1338,7 +1340,7 @@ public class SubsonicController(
         else
             results = musicManager.GetInstantMixFromItem(item, user, dtoOptions);
 
-        var songs = results.Take(count).OfType<Audio>().Select(ToSongWithArtist).ToList();
+        var songs = SongList(results.OfType<Audio>().Take(count));
         var jsonKey = v2 ? "similarSongs2" : "similarSongs";
         var json = SubsonicEnvelope.Ok(new() { [jsonKey] = new Dictionary<string, object> { ["song"] = songs } });
         return Respond(format, json, () => XmlBuilder.SimilarSongs(songs, v2));
@@ -1355,14 +1357,14 @@ public class SubsonicController(
         var count = p.GetInt("count", 50);
         var tagArtist = library.GetArtist(artistName);
 
-        var songs = library.GetItemList(new InternalItemsQuery(user)
+        var songs = SongList(library.GetItemList(new InternalItemsQuery(user)
         {
             IncludeItemTypes = [BaseItemKind.Audio],
             AlbumArtistIds = [tagArtist.Id],
             OrderBy = [(ItemSortBy.PlayCount, SortOrder.Descending)],
             Limit = count,
             Recursive = true,
-        }).OfType<Audio>().Select(ToSongWithArtist).ToList();
+        }));
 
         var json = SubsonicEnvelope.Ok(new() { ["topSongs"] = new Dictionary<string, object> { ["song"] = songs } });
         return Respond(format, json, () => XmlBuilder.TopSongs(songs));
@@ -1784,13 +1786,95 @@ public class SubsonicController(
 
     private Dictionary<string, object?> ToSongWithArtist(Audio s) => ToAlbumSong(s, null);
 
+    /// <summary>The songs among these items, mapped after one <see cref="Prefetch(IEnumerable{Audio})"/> for all of them.</summary>
+    private List<Dictionary<string, object?>> SongList(IEnumerable<BaseItem> items) => Prefetch(items.OfType<Audio>()).Select(ToSongWithArtist).ToList();
+
     private Dictionary<string, object?> ToAlbumSong(Audio s, MusicAlbum? album) =>
-        ItemMapper.ToSong(s, album?.Id.ToString("N"), album?.Name,
+        ItemMapper.ToSong(s, album?.Id.ToString("N") ?? _albumOfFolder.GetValueOrDefault(s.ParentId), album?.Name,
             artistId: ResolveArtistTagId(s.Artists.FirstOrDefault() ?? s.AlbumArtists.FirstOrDefault()),
             userData: UserDataFor(s), starredAt: StarredAt(s), relativePath: RelativePath(s.Path), artistIdOf: ArtistIdOf);
 
     private Dictionary<string, object?> ToAlbumWithArtist(MusicAlbum a) =>
-        ItemMapper.ToAlbumShort(a, ResolveArtistTagId(a.AlbumArtist ?? a.AlbumArtists.FirstOrDefault()), UserDataFor(a), StarredAt(a), ArtistIdOf);
+        ItemMapper.ToAlbumShort(a, ResolveArtistTagId(a.AlbumArtist ?? a.AlbumArtists.FirstOrDefault()), UserDataFor(a), StarredAt(a), ArtistIdOf,
+            _songCounts.TryGetValue(a.Id, out var n) ? n : null);
+
+    // Per-request: song counts of the albums in the list being answered
+    private readonly Dictionary<Guid, int> _songCounts = [];
+
+    // Per-request: the album a song folder belongs to (the folder itself, or the album of a disc folder), by folder id
+    private readonly Dictionary<Guid, string> _albumOfFolder = [];
+
+    /// <summary>
+    /// Looks up what a list of songs needs in a few queries, before mapping them: their artists' ids
+    /// and their albums (song.AlbumEntity fetches each song's parent folder, one query per song).
+    /// Songs whose album isn't their folder or the folder above it are left to AlbumEntity.
+    /// </summary>
+    private List<Audio> Prefetch(IEnumerable<Audio> songs)
+    {
+        var list = songs.ToList();
+        var folderIds = list.Select(s => s.ParentId).Where(id => id != Guid.Empty && !_albumOfFolder.ContainsKey(id)).Distinct().ToArray();
+        if (folderIds.Length > 0)
+        {
+            var folders = library.GetItemList(new InternalItemsQuery { ItemIds = folderIds, DtoOptions = new DtoOptions(false) });
+            var discFolders = folders.Where(f => f is not MusicAlbum).ToList();
+            var albumsAbove = discFolders.Count == 0 ? [] : library.GetItemList(new InternalItemsQuery
+                { ItemIds = [.. discFolders.Select(f => f.ParentId).Distinct()], DtoOptions = new DtoOptions(false) })
+                .OfType<MusicAlbum>().Select(a => a.Id).ToHashSet();
+            foreach (var f in folders)
+            {
+                if (f is MusicAlbum) _albumOfFolder[f.Id] = f.Id.ToString("N");
+                else if (albumsAbove.Contains(f.ParentId)) _albumOfFolder[f.Id] = f.ParentId.ToString("N");
+            }
+        }
+
+        PrefetchArtistIds(list.SelectMany(s => s.Artists.Concat(s.AlbumArtists)));
+        return list;
+    }
+
+    /// <summary>Artist ids for all these names in one lookup, for <see cref="ArtistIdOf"/>.</summary>
+    private void PrefetchArtistIds(IEnumerable<string> names)
+    {
+        var missing = names.Where(n => !string.IsNullOrWhiteSpace(n) && !_artistIds.ContainsKey(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (missing.Count > 0)
+            foreach (var (name, artist) in LibraryQueries.ResolveArtists(library, missing))
+                _artistIds[name] = artist.Id.ToString("N");
+    }
+
+    /// <summary>
+    /// Looks up what a list of albums needs in two queries, before mapping them: their song counts
+    /// (album.Tracks loads an album's songs with all their metadata) and their artists' ids (one
+    /// lookup per artist otherwise).
+    /// </summary>
+    private List<MusicAlbum> Prefetch(IEnumerable<MusicAlbum> albums)
+    {
+        var list = albums.ToList();
+        if (list.Count == 0) return list;
+        var ids = list.Select(a => a.Id).ToHashSet();
+
+        // Songs sit in the album or in a disc folder of it (CD 1, CD 2, ...)
+        var tracks = library.GetItemList(new InternalItemsQuery
+        {
+            IncludeItemTypes = [BaseItemKind.Audio],
+            AncestorIds = [.. ids],
+            Recursive = true,
+            DtoOptions = new DtoOptions(false),
+        });
+        var albumOfFolder = tracks.Any(t => !ids.Contains(t.ParentId))
+            ? library.GetItemList(new InternalItemsQuery { AncestorIds = [.. ids], IsFolder = true, Recursive = true, DtoOptions = new DtoOptions(false) })
+                .ToDictionary(f => f.Id, f => f.ParentId)
+            : [];
+        foreach (var t in tracks)
+        {
+            var album = t.ParentId;
+            while (!ids.Contains(album) && albumOfFolder.TryGetValue(album, out var parent)) album = parent;
+            _songCounts[album] = _songCounts.GetValueOrDefault(album) + 1;
+        }
+        foreach (var id in ids) _songCounts.TryAdd(id, 0);
+
+        PrefetchArtistIds(list.SelectMany(a => a.AlbumArtists.Count > 0 ? a.AlbumArtists : a.AlbumArtist is { Length: > 0 } one ? [one] : []));
+        return list;
+    }
 
     /// <summary>An album for the ID3 endpoints (getArtist, getAlbumList2, search3, getStarred2).</summary>
     private Dictionary<string, object?> ToAlbumId3WithArtist(MusicAlbum a) => ItemMapper.AsAlbumId3(ToAlbumWithArtist(a));

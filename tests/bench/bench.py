@@ -7,7 +7,8 @@
 usage: uv run bench.py <jellyfin url> <artists> <out.json>   (run.sh starts Jellyfin and runs it)
 Each endpoint is called once to warm up, then RUNS times; the median must stay within its budget.
 Budgets are 3-4 times what these take on a laptop, so a slower CI runner passes and real regressions
-don't: one lookup per artist made the artist list take ~5 s, counting each genre separately ~4 s.
+don't. Per-item lookups are what these catch: one per artist made the artist list take ~5 s, loading
+each album's songs to count them made 500-album lists take ~2 s.
 """
 import json, pathlib, statistics, sys, time
 
@@ -43,16 +44,16 @@ CASES = [
     ("getArtistInfo2", {"id": artist_id}, 1.0),
     ("getMusicDirectory", {"id": artist_id}, 0.5),
     ("getAlbum", {"id": albums[0]["id"]}, 0.5),
-    ("getAlbumList2", {"type": "alphabeticalByName", "size": 500}, 8.0),
-    ("getAlbumList2", {"type": "newest", "size": 500}, 8.0),
-    ("getAlbumList2", {"type": "random", "size": 500}, 8.0),
-    ("getAlbumList2", {"type": "recent", "size": 50}, 1.0),
-    ("getAlbumList2", {"type": "starred", "size": 500}, 2.0),
-    ("getStarred2", {}, 2.5),
-    ("getGenres", {}, 2.5),
-    ("getSongsByGenre", {"genre": "Genre 1", "count": 500}, 1.5),
-    ("getRandomSongs", {"size": 500}, 5.0),
-    ("search3", {"query": "", "artistCount": 500, "albumCount": 500, "songCount": 500}, 8.0),  # clients' full sync
+    ("getAlbumList2", {"type": "alphabeticalByName", "size": 500}, 1.0),
+    ("getAlbumList2", {"type": "newest", "size": 500}, 1.0),
+    ("getAlbumList2", {"type": "random", "size": 500}, 1.0),
+    ("getAlbumList2", {"type": "recent", "size": 50}, 0.5),
+    ("getAlbumList2", {"type": "starred", "size": 500}, 0.5),
+    ("getStarred2", {}, 0.5),
+    ("getGenres", {}, 2.5),  # Jellyfin's own query (~4 ms per genre), not ours
+    ("getSongsByGenre", {"genre": "Genre 1", "count": 500}, 0.5),
+    ("getRandomSongs", {"size": 500}, 0.5),
+    ("search3", {"query": "", "artistCount": 500, "albumCount": 500, "songCount": 500}, 2.0),  # clients' full sync
     ("search3", {"query": "Artist 01"}, 1.0),
 ]
 
