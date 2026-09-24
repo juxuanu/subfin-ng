@@ -7,6 +7,15 @@
     "owner": "juxuanu",
     "category": "Music",
     "imageUrl": "https://raw.githubusercontent.com/juxuanu/subfin-plugin/main/logo.png",
-    "versions": []
+    "versions": [
+      {
+        "version": "12.1.7.0",
+        "changelog": "- release: bump to v12.1.7.0\n- build: publish releases and a Jellyfin plugin repository from this fork\n- docs: a short README with install and setup steps\n- fix: playback reports: one play per listen, and the real play method\n- fix: getAlbum failed for albums the user starred, rated or played\n- feat: OpenSubsonic passwords for token login, managed on the plugin page\n- feat!: sign in with Jellyfin accounts, serve the API at /opensubsonic\n- feat: accept parameters as a form POST (formPost extension)\n- fix: getNowPlaying follows the spec and only lists songs the user can see\n- test: add an OpenSubsonic conformance suite\n- fix: work behind reverse proxies and Jellyfin base URLs\n- fix: scrobble counts each play once and honours time and batches\n- fix: playlists follow Jellyfin's ownership and visibility rules\n- fix(security): restrict share links and enforce Jellyfin permissions\n- feat: OpenSubsonic API key authentication\n- fix: OpenSubsonic spec conformance\n- fix: disc-folder albums, track artists, user data and relative paths\n- build: target Jellyfin 12.1 and .NET 10\n- release: update manifest for v10.11.5.7 [skip ci]\n- chore: drop obsolete publish.sh from gitignore (releases via GitHub Actions)",
+        "targetAbi": "12.1.0.0",
+        "sourceUrl": "https://github.com/juxuanu/subfin-plugin/releases/download/v12.1.7.0/jellyfin-plugin-subfin_12.1.7.0.zip",
+        "checksum": "e1af1c9b139575b146769927d2ada2cf",
+        "timestamp": "2026-09-24T02:36:50Z"
+      }
+    ]
   }
 ]
