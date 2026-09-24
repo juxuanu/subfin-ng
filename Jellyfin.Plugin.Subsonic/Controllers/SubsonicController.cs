@@ -59,6 +59,7 @@ public class SubsonicController : ControllerBase
     private readonly ILyricManager _lyricManager;
     private readonly IServerApplicationHost _appHost;
     private readonly INetworkManager _network;
+    private readonly ISimilarItemsManager _similarItems;
     private readonly ILogger<SubsonicController> _logger;
     private static readonly ConcurrentDictionary<string, byte> _refreshInProgress = new();
 
@@ -84,6 +85,7 @@ public class SubsonicController : ControllerBase
         ILyricManager lyricManager,
         IServerApplicationHost appHost,
         INetworkManager network,
+        ISimilarItemsManager similarItems,
         ILogger<SubsonicController> logger)
     {
         _auth = auth;
@@ -98,6 +100,7 @@ public class SubsonicController : ControllerBase
         _lyricManager = lyricManager;
         _appHost = appHost;
         _network = network;
+        _similarItems = similarItems;
         _logger = logger;
     }
 
@@ -227,7 +230,7 @@ public class SubsonicController : ControllerBase
             "getstarred" => GetStarred(user, format, false),
             "getstarred2" => GetStarred(user, format, true),
             "getartistinfo" or "getartistinfo2" => await GetArtistInfo(auth, user, p, format, method.EndsWith("2")),
-            "getalbuminfo" or "getalbuminfo2" => await GetAlbumInfo(auth, user, p, format, method.EndsWith("2")),
+            "getalbuminfo" or "getalbuminfo2" => GetAlbumInfo(p, format),
             "getsimilarsongs" or "getsimilarsongs2" => GetSimilarSongs(user, p, format, method.EndsWith("2")),
             "gettopsongs" => GetTopSongs(user, p, format),
             "getlyrics" => await GetLyrics(user, p, format),
@@ -1387,6 +1390,10 @@ public class SubsonicController : ControllerBase
 
     // ── getArtistInfo / getArtistInfo2 ───────────────────────────────────────
 
+    /// <summary>
+    /// Artist details from Jellyfin: its biography (overview), MusicBrainz id and image, and similar artists
+    /// from Jellyfin's similar-items providers (per the library's settings, e.g. ListenBrainz).
+    /// </summary>
     private async Task<IActionResult> GetArtistInfo(AuthResult auth, User user, QueryParams p, string format, bool v2)
     {
         var id = p.Id;
@@ -1395,31 +1402,28 @@ public class SubsonicController : ControllerBase
         var artist = GetVisibleItem<MusicArtist>(guid);
         if (artist == null) return ErrorResponse(format, ErrorCode.NotFound, "Artist not found");
 
+        var bio = string.IsNullOrWhiteSpace(artist.Overview) ? null : artist.Overview;
         var mbid = artist.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.MusicBrainzArtist);
-        var info = await FetchLastFmArtistInfo(mbid, artist.Name);
 
-        var similarArtistDicts = new List<Dictionary<string, object?>>();
-        if (info != null)
-        {
-            foreach (var name in info.SimilarNames)
+        // Only artists the user can open: clients look them up among the ones getArtists returned
+        var count = Math.Max(0, p.GetInt("count", 20));
+        var known = BuildArtistIndex(auth, user, null).SelectMany(l => l.Artists).ToDictionary(a => a.Id, a => a.AlbumCount);
+        var similar = count == 0 ? [] : await _similarItems.GetSimilarItemsAsync(
+            artist, [], user, new DtoOptions(false), null, _library.GetLibraryOptions(artist), HttpContext.RequestAborted);
+        var similarArtistDicts = similar
+            .OfType<MusicArtist>()
+            .Where(a => a.Id != artist.Id && known.ContainsKey(a.Id.ToString("N")))
+            .Take(count)
+            .Select(a => new Dictionary<string, object?>
             {
-                var similar = _library.GetArtist(name);
-                if (similar == null) continue;
-                similarArtistDicts.Add(new Dictionary<string, object?>
-                {
-                    ["id"] = similar.Id.ToString("N"),
-                    ["name"] = similar.Name ?? name,
-                    ["albumCount"] = 0,
-                });
-            }
-        }
+                ["id"] = a.Id.ToString("N"),
+                ["name"] = a.Name ?? "",
+                ["coverArt"] = $"ar-{a.Id:N}",
+                ["albumCount"] = known[a.Id.ToString("N")],
+            })
+            .ToList();
 
-        var bio = info?.Bio;
-        var mbidResult = info?.Mbid ?? mbid;
-        var url = info?.Url;
-
-        // Build the artist image URL pointing to Jellyfin's image endpoint.
-        // Jellyfin stores artist images on the scanned entity; this URL serves it directly.
+        // Jellyfin's image endpoint serves the artist's image
         var artistImageUrl = $"{Request.Scheme}://{Request.Host}{Request.PathBase}/Items/{artist.Id:N}/Images/Primary";
 
         var jsonKey = v2 ? "artistInfo2" : "artistInfo";
@@ -1431,15 +1435,15 @@ public class SubsonicController : ControllerBase
             ["similarArtist"] = similarArtistDicts.Select(s => (object)s).ToList(),
         };
         if (bio != null) jsonInfo["biography"] = bio;
-        if (mbidResult != null) jsonInfo["musicBrainzId"] = mbidResult;
-        if (url != null) jsonInfo["lastFmUrl"] = url;
+        if (mbid != null) jsonInfo["musicBrainzId"] = mbid;
         var json = SubsonicEnvelope.Ok(new() { [jsonKey] = jsonInfo });
-        return Respond(format, json, () => XmlBuilder.ArtistInfo(bio, mbidResult, url, artistImageUrl, similarArtistDicts, v2));
+        return Respond(format, json, () => XmlBuilder.ArtistInfo(bio, mbid, artistImageUrl, similarArtistDicts, v2));
     }
 
     // ── getAlbumInfo / getAlbumInfo2 ─────────────────────────────────────────
 
-    private async Task<IActionResult> GetAlbumInfo(AuthResult auth, User user, QueryParams p, string format, bool v2)
+    /// <summary>Album details from Jellyfin: its notes (overview) and MusicBrainz id.</summary>
+    private IActionResult GetAlbumInfo(QueryParams p, string format)
     {
         var id = p.Id;
         if (!TryParseItemId(id, format, out var guid, out var err)) return err!;
@@ -1447,21 +1451,15 @@ public class SubsonicController : ControllerBase
         var album = GetVisibleItem<MusicAlbum>(guid);
         if (album == null) return ErrorResponse(format, ErrorCode.NotFound, "Album not found");
 
+        var notes = string.IsNullOrWhiteSpace(album.Overview) ? null : album.Overview;
         var mbid = album.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.MusicBrainzAlbum);
-        var artistName = album.AlbumArtist ?? album.AlbumArtists.FirstOrDefault();
-        var info = await FetchLastFmAlbumInfo(artistName, album.Name, mbid);
-
-        var notes = info?.Notes;
-        var mbidResult = info?.Mbid ?? mbid;
-        var url = info?.Url;
 
         const string jsonKey = "albumInfo";  // same element for getAlbumInfo and getAlbumInfo2 (unlike artistInfo2)
         var jsonInfo = new Dictionary<string, object>();
         if (notes != null) jsonInfo["notes"] = notes;
-        if (mbidResult != null) jsonInfo["musicBrainzId"] = mbidResult;
-        if (url != null) jsonInfo["lastFmUrl"] = url;
+        if (mbid != null) jsonInfo["musicBrainzId"] = mbid;
         var json = SubsonicEnvelope.Ok(new() { [jsonKey] = jsonInfo });
-        return Respond(format, json, () => XmlBuilder.AlbumInfo(notes, mbidResult, url, v2));
+        return Respond(format, json, () => XmlBuilder.AlbumInfo(notes, mbid));
     }
 
     // ── getSimilarSongs / getSimilarSongs2 ───────────────────────────────────
@@ -1512,97 +1510,6 @@ public class SubsonicController : ControllerBase
 
         var json = SubsonicEnvelope.Ok(new() { ["topSongs"] = new Dictionary<string, object> { ["song"] = songs } });
         return Respond(format, json, () => XmlBuilder.TopSongs(songs));
-    }
-
-    // ── Last.fm helpers ──────────────────────────────────────────────────────
-
-    private record LastFmArtistInfo(string? Bio, string? Url, string? Mbid, List<string> SimilarNames);
-    private record LastFmAlbumInfo(string? Notes, string? Url, string? Mbid);
-
-    private async Task<LastFmArtistInfo?> FetchLastFmArtistInfo(string? mbid, string? artistName)
-    {
-        var apiKey = SubsonicPlugin.Instance?.Configuration?.LastFmApiKey;
-        if (string.IsNullOrEmpty(apiKey)) return null;
-
-        var cacheKey = !string.IsNullOrEmpty(mbid)
-            ? $"lastfm:artist:mbid:{mbid}"
-            : $"lastfm:artist:name:{(artistName ?? "").ToLowerInvariant()}";
-
-        var cached = SubsonicStore.GetDerivedCache(cacheKey);
-        if (cached != null && (DateTime.UtcNow - DateTime.Parse(cached.CachedAt)).TotalDays < 30)
-        {
-            try { return JsonSerializer.Deserialize<LastFmArtistInfo>(cached.ValueJson); } catch { }
-        }
-
-        try
-        {
-            var url = !string.IsNullOrEmpty(mbid)
-                ? $"https://ws.audioscrobbler.com/2.0/?method=artist.getinfo&mbid={Uri.EscapeDataString(mbid)}&api_key={apiKey}&format=json"
-                : $"https://ws.audioscrobbler.com/2.0/?method=artist.getinfo&artist={Uri.EscapeDataString(artistName ?? "")}&api_key={apiKey}&format=json";
-
-            var client = _httpClientFactory.CreateClient();
-            var resp = await client.GetStringAsync(url);
-            var doc = JsonNode.Parse(resp);
-            var a = doc?["artist"];
-            if (a == null) return null;
-
-            var bio = a["bio"]?["summary"]?.GetValue<string>();
-            var lastFmUrl = a["url"]?.GetValue<string>();
-            var artistMbid = a["mbid"]?.GetValue<string>();
-            var similar = a["similar"]?["artist"]?.AsArray()
-                .Select(n => n?["name"]?.GetValue<string>()).Where(n => n != null).Cast<string>().ToList() ?? [];
-
-            var info = new LastFmArtistInfo(bio, lastFmUrl, artistMbid, similar);
-            SubsonicStore.SetDerivedCache(cacheKey, JsonSerializer.Serialize(info), null);
-            return info;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "[Subfin] Last.fm artist lookup failed for {Name}", artistName);
-            return null;
-        }
-    }
-
-    private async Task<LastFmAlbumInfo?> FetchLastFmAlbumInfo(string? artistName, string? albumName, string? mbid)
-    {
-        var apiKey = SubsonicPlugin.Instance?.Configuration?.LastFmApiKey;
-        if (string.IsNullOrEmpty(apiKey)) return null;
-
-        var cacheKey = !string.IsNullOrEmpty(mbid)
-            ? $"lastfm:album:mbid:{mbid}"
-            : $"lastfm:album:{(artistName ?? "").ToLowerInvariant()}:{(albumName ?? "").ToLowerInvariant()}";
-
-        var cached = SubsonicStore.GetDerivedCache(cacheKey);
-        if (cached != null && (DateTime.UtcNow - DateTime.Parse(cached.CachedAt)).TotalDays < 30)
-        {
-            try { return JsonSerializer.Deserialize<LastFmAlbumInfo>(cached.ValueJson); } catch { }
-        }
-
-        try
-        {
-            var url = !string.IsNullOrEmpty(mbid)
-                ? $"https://ws.audioscrobbler.com/2.0/?method=album.getinfo&mbid={Uri.EscapeDataString(mbid)}&api_key={apiKey}&format=json"
-                : $"https://ws.audioscrobbler.com/2.0/?method=album.getinfo&artist={Uri.EscapeDataString(artistName ?? "")}&album={Uri.EscapeDataString(albumName ?? "")}&api_key={apiKey}&format=json";
-
-            var client = _httpClientFactory.CreateClient();
-            var resp = await client.GetStringAsync(url);
-            var doc = JsonNode.Parse(resp);
-            var al = doc?["album"];
-            if (al == null) return null;
-
-            var notes = al["wiki"]?["summary"]?.GetValue<string>();
-            var lastFmUrl = al["url"]?.GetValue<string>();
-            var albumMbid = al["mbid"]?.GetValue<string>();
-
-            var info = new LastFmAlbumInfo(notes, lastFmUrl, albumMbid);
-            SubsonicStore.SetDerivedCache(cacheKey, JsonSerializer.Serialize(info), null);
-            return info;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "[Subfin] Last.fm album lookup failed for {Name}", albumName);
-            return null;
-        }
     }
 
     private async Task<IActionResult> GetLyrics(User user, QueryParams p, string format)

@@ -36,13 +36,6 @@
 
         <h3 class="sectionTitle" style="margin-top: 2em;">Settings</h3>
         <form id="SubfinConfigForm">
-          <div class="inputContainer">
-            <label class="inputLabel inputLabelUnfocused" for="lastFmApiKey">Last.fm API key</label>
-            <input id="lastFmApiKey" is="emby-input" type="password" autocomplete="off" placeholder="Enter a new key to change it" />
-            <div id="lastFmApiKeyStatus" class="fieldDescription"></div>
-            <div class="fieldDescription">Used for artist and album information (getArtistInfo, getAlbumInfo). Leave empty to keep the saved key.</div>
-          </div>
-
           <div class="checkboxContainer checkboxContainer-withDescription">
             <label class="emby-checkbox-label">
               <input id="sharingEnabled" type="checkbox" is="emby-checkbox" />
@@ -187,7 +180,6 @@
           page.querySelector('#subfinServerPath').textContent = serverPath();
           Promise.all([
             ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-              page.querySelector('#lastFmApiKeyStatus').textContent = config.LastFmApiKey ? 'A key is saved.' : 'No key saved.';
               page.querySelector('#sharingEnabled').checked = config.SharingEnabled !== false;
               page.querySelector('#logRestRequests').checked = !!config.LogRestRequests;
             }),
@@ -198,15 +190,11 @@
         page.querySelector('#SubfinConfigForm').addEventListener('submit', function (e) {
           e.preventDefault();
           Dashboard.showLoadingMsg();
-          var newKey = page.querySelector('#lastFmApiKey').value;
           ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-            if (newKey) config.LastFmApiKey = newKey;
             config.SharingEnabled = page.querySelector('#sharingEnabled').checked;
             config.LogRestRequests = page.querySelector('#logRestRequests').checked;
             return ApiClient.updatePluginConfiguration(pluginId, config);
           }).then(function (result) {
-            page.querySelector('#lastFmApiKey').value = '';
-            if (newKey) page.querySelector('#lastFmApiKeyStatus').textContent = 'A key is saved.';
             Dashboard.processPluginConfigurationUpdateResult(result);
           }, function (e) { showError('Could not save the settings.', e); });
           return false;

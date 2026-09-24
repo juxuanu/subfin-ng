@@ -1,6 +1,6 @@
 # Subfin — OpenSubsonic API for Jellyfin
 
-Subfin lets Subsonic-compatible music apps play your Jellyfin music library. It adds an [OpenSubsonic](https://opensubsonic.netlify.app/) API to Jellyfin itself, so there's no second server to run and no second set of accounts: apps sign in with Jellyfin usernames, and Jellyfin's library access, parental ratings and account rules apply.
+Subfin lets Subsonic-compatible music apps play your Jellyfin music library. It adds an [OpenSubsonic](https://opensubsonic.netlify.app/) API to Jellyfin itself, so there's no second server to run and no second set of accounts: apps sign in with Jellyfin usernames, and Jellyfin's library access, parental ratings and account rules apply. Everything apps see comes from Jellyfin, including artist biographies, album notes, images and similar artists.
 
 Requires Jellyfin **12.1** or later.
 
@@ -58,7 +58,6 @@ Apps can create share links for songs, albums and playlists. A link opens a page
 In **Dashboard → Plugins → Subfin**:
 
 - **OpenSubsonic passwords**: one per user, see above.
-- **Last.fm API key**: adds artist biographies and images.
 - **Enable sharing**: when off, apps can't create share links and existing links stop working.
 - **Log API requests**: logs each request's method, for troubleshooting.
 

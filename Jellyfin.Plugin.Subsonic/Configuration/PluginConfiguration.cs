@@ -11,9 +11,6 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public string Salt { get; set; } = string.Empty;
 
-    /// <summary>Last.fm API key for getArtistInfo/getAlbumInfo. Optional — leave empty to disable.</summary>
-    public string LastFmApiKey { get; set; } = string.Empty;
-
     /// <summary>Log every Subsonic API request (method and format).</summary>
     public bool LogRestRequests { get; set; } = false;
 

@@ -74,7 +74,7 @@ public class ResponseShapeTests
     [Fact]
     public void AlbumInfo2_ReturnsAnAlbumInfoElement()
     {
-        Assert.NotNull(Root(XmlBuilder.AlbumInfo("notes", null, null, v2: true))["albumInfo", Ns]);
+        Assert.NotNull(Root(XmlBuilder.AlbumInfo("notes", null))["albumInfo", Ns]);
     }
 
     [Fact]

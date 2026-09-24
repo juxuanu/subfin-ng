@@ -427,20 +427,18 @@ public static class XmlBuilder
 
     // ── ArtistInfo ───────────────────────────────────────────────────────────
 
-    public static string ArtistInfo(string? biography, string? musicBrainzId, string? lastFmUrl, string? artistImageUrl, List<Dictionary<string, object?>> similarArtists, bool v2 = false) => OkEnvelope(w =>
+    public static string ArtistInfo(string? biography, string? musicBrainzId, string? artistImageUrl, List<Dictionary<string, object?>> similarArtists, bool v2 = false) => OkEnvelope(w =>
     {
         var imageUrl = artistImageUrl ?? "";
         w.WriteStartElement(v2 ? "artistInfo2" : "artistInfo", Ns);
         // Attributes first (required before any child elements per XmlWriter rules)
         if (!string.IsNullOrEmpty(musicBrainzId)) w.WriteAttributeString("musicBrainzId", musicBrainzId);
-        if (!string.IsNullOrEmpty(lastFmUrl)) w.WriteAttributeString("lastFmUrl", lastFmUrl);
         w.WriteAttributeString("smallImageUrl", imageUrl);
         w.WriteAttributeString("mediumImageUrl", imageUrl);
         w.WriteAttributeString("largeImageUrl", imageUrl);
         // Text element children — DSub2000's ArtistInfoParser reads these as text elements, not attributes
         if (!string.IsNullOrEmpty(biography)) { w.WriteStartElement("biography", Ns); w.WriteString(biography); w.WriteEndElement(); }
         if (!string.IsNullOrEmpty(musicBrainzId)) { w.WriteStartElement("musicBrainzId", Ns); w.WriteString(musicBrainzId); w.WriteEndElement(); }
-        if (!string.IsNullOrEmpty(lastFmUrl)) { w.WriteStartElement("lastFmUrl", Ns); w.WriteString(lastFmUrl); w.WriteEndElement(); }
         { w.WriteStartElement("smallImageUrl", Ns); w.WriteString(imageUrl); w.WriteEndElement(); }
         { w.WriteStartElement("mediumImageUrl", Ns); w.WriteString(imageUrl); w.WriteEndElement(); }
         { w.WriteStartElement("largeImageUrl", Ns); w.WriteString(imageUrl); w.WriteEndElement(); }
@@ -450,11 +448,10 @@ public static class XmlBuilder
 
     // ── AlbumInfo ────────────────────────────────────────────────────────────
 
-    public static string AlbumInfo(string? notes, string? musicBrainzId, string? lastFmUrl, bool v2 = false) => OkEnvelope(w =>
+    public static string AlbumInfo(string? notes, string? musicBrainzId) => OkEnvelope(w =>
     {
-        w.WriteStartElement("albumInfo", Ns);  // getAlbumInfo2 also returns <albumInfo>; v2 kept for callers
+        w.WriteStartElement("albumInfo", Ns);  // getAlbumInfo and getAlbumInfo2 both return <albumInfo>
         if (!string.IsNullOrEmpty(musicBrainzId)) w.WriteAttributeString("musicBrainzId", musicBrainzId);
-        if (!string.IsNullOrEmpty(lastFmUrl)) w.WriteAttributeString("lastFmUrl", lastFmUrl);
         if (!string.IsNullOrEmpty(notes)) { w.WriteStartElement("notes", Ns); w.WriteString(notes); w.WriteEndElement(); }
         w.WriteEndElement();
     });

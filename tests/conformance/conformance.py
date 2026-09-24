@@ -650,6 +650,27 @@ if song_ids:
     call("getLyricsBySongId", {"id": song_ids[0]})
 if "Album One" in albums:
     call("getAlbumInfo2", {"id": albums["Album One"]["id"]})
+
+# Artist and album details come from Jellyfin's own metadata (no Last.fm)
+if test_artist and "Album One" in albums:
+    def set_overview(item_id, text):
+        item = jf("GET", f"/Items/{item_id}", params={"userId": user_ids[AU]}).json()
+        jf("POST", f"/Items/{item_id}", json={**item, "Overview": text})
+    set_overview(test_artist["id"], "Biography from Jellyfin.")
+    set_overview(albums["Album One"]["id"], "Notes from Jellyfin.")
+    r = call("getArtistInfo2", {"id": test_artist["id"]}, label="artist info from Jellyfin")
+    info = (r or {}).get("artistInfo2", {})
+    record("getArtistInfo2 biography is the artist's Jellyfin overview", info.get("biography") == "Biography from Jellyfin.", info)
+    record("similar artists are artists from getArtists", all(x.get("id") in artist_ids for x in info.get("similarArtist", [])), info.get("similarArtist"))
+    record("artist info has no Last.fm link", "lastFmUrl" not in info, info)
+    x = requests.get(f"{API}/getArtistInfo", params={**auth(f="xml"), "id": test_artist["id"]}, timeout=30)
+    try:
+        bio = ET.fromstring(x.content).find("{http://subsonic.org/restapi}artistInfo/{http://subsonic.org/restapi}biography").text
+    except (ET.ParseError, AttributeError) as e:
+        bio = repr(e)
+    record("getArtistInfo (XML) has the biography", bio == "Biography from Jellyfin.", bio)
+    r = call("getAlbumInfo2", {"id": albums["Album One"]["id"]}, label="album info from Jellyfin")
+    record("getAlbumInfo2 notes are the album's Jellyfin overview", (r or {}).get("albumInfo", {}).get("notes") == "Notes from Jellyfin.", r)
 r = call("getAlbum", {"id": secrets.token_hex(16)}, check_schema=False, label="getAlbum-missing")
 record("getAlbum unknown id -> error 70", err(r) == 70, r)
 r = call("getAlbum", check_schema=False, label="getAlbum-noid")

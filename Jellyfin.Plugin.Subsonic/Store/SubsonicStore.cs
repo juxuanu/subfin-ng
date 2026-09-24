@@ -132,6 +132,8 @@ public static class SubsonicStore
             tx.Commit();
         }
         Exec(null, "CREATE INDEX IF NOT EXISTS idx_shares_owner ON shares(owner_user_id)");
+        // Artist and album details from Last.fm, cached by versions that used it
+        Exec(null, "DELETE FROM derived_cache WHERE cache_key LIKE 'lastfm:%'");
     }
 
     private static bool TableExists(string table) =>
