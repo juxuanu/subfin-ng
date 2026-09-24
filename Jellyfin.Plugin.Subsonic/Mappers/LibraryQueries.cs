@@ -107,14 +107,10 @@ public static partial class LibraryQueries
 
         var allAlbums = library.GetItemList(albumQuery).OfType<MusicAlbum>();
 
-        // Every album artist, not only the first: songs and albums list them all (OpenSubsonic
-        // "artists"), and clients open those artists from the getArtists list.
         var byKey = new Dictionary<string, (string Name, int Count)>(StringComparer.OrdinalIgnoreCase);
         foreach (var album in allAlbums)
         {
-            var names = album.AlbumArtists.Count > 0 ? album.AlbumArtists : album.AlbumArtist is { Length: > 0 } one ? [one] : [];
-            foreach (var key in names.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => (Name: n, Key: CanonicalArtistKey(n)))
-                         .DistinctBy(n => n.Key))
+            foreach (var key in AlbumArtistKeys(album))
             {
                 byKey[key.Key] = byKey.TryGetValue(key.Key, out var existing) ? existing with { Count = existing.Count + 1 } : (key.Name, 1);
             }
@@ -122,6 +118,35 @@ public static partial class LibraryQueries
 
         var entities = ResolveArtists(library, byKey.Values.Select(v => v.Name).ToList());
         return byKey.Values.Select(v => (entities[v.Name].Id.ToString("N"), v.Name, v.Count)).OrderBy(v => v.Name).ToList();
+    }
+
+    /// <summary>
+    /// How many albums each of these artists has, counted as <see cref="BuildArtistList"/> counts them.
+    /// One query for the albums of all of them, not a scan of every album as the full list needs.
+    /// </summary>
+    public static Dictionary<Guid, int> AlbumCounts(ILibraryManager library, User user, IReadOnlyCollection<MusicArtist> artists, List<string>? folderIds)
+    {
+        if (artists.Count == 0) return [];
+        var albumQuery = new InternalItemsQuery(user)
+        {
+            IncludeItemTypes = [BaseItemKind.MusicAlbum],
+            AlbumArtistIds = artists.Select(a => a.Id).ToArray(),
+            Recursive = true,
+        };
+        if (folderIds != null)
+            albumQuery.AncestorIds = folderIds.Select(Guid.Parse).ToArray();
+
+        var byKey = library.GetItemList(albumQuery).OfType<MusicAlbum>()
+            .SelectMany(AlbumArtistKeys).CountBy(k => k.Key).ToDictionary();
+        return artists.ToDictionary(a => a.Id, a => byKey.GetValueOrDefault(CanonicalArtistKey(a.Name ?? "")));
+    }
+
+    // Every album artist, not only the first: songs and albums list them all (OpenSubsonic
+    // "artists"), and clients open those artists from the getArtists list. Once each.
+    private static IEnumerable<(string Name, string Key)> AlbumArtistKeys(MusicAlbum album)
+    {
+        var names = album.AlbumArtists.Count > 0 ? album.AlbumArtists : album.AlbumArtist is { Length: > 0 } one ? [one] : [];
+        return names.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => (Name: n, Key: CanonicalArtistKey(n))).DistinctBy(n => n.Key);
     }
 
     /// <summary>

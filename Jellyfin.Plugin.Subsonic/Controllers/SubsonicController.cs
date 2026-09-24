@@ -1170,9 +1170,16 @@ public class SubsonicController(
 
     private IActionResult GetStarred(User user, string format, bool v2)
     {
-        var artists = library.GetItemList(new InternalItemsQuery(user)
-        { IncludeItemTypes = [BaseItemKind.MusicArtist], IsFavorite = true, Recursive = true })
-            .OfType<MusicArtist>().Select(a => new Dictionary<string, object?> { ["id"] = a.Id.ToString("N"), ["name"] = a.Name ?? "", ["starred"] = StarredAt(a) ?? a.DateCreated.ToString("o") }).ToList();
+        var starredArtists = library.GetItemList(new InternalItemsQuery(user)
+        { IncludeItemTypes = [BaseItemKind.MusicArtist], IsFavorite = true, Recursive = true }).OfType<MusicArtist>().ToList();
+        // getStarred2's artists are ArtistID3, like getArtists' (album count, cover); getStarred's are plain Artist
+        var albumCounts = v2 ? LibraryQueries.AlbumCounts(library, user, starredArtists, GetEffectiveFolderIds(null)) : null;
+        var artists = starredArtists.Select(a =>
+        {
+            var (id, name, starred) = (a.Id.ToString("N"), a.Name ?? "", StarredAt(a) ?? a.DateCreated.ToString("o"));
+            return albumCounts != null ? ItemMapper.ToIndexArtist(id, name, albumCounts[a.Id], starred)
+                : new Dictionary<string, object?> { ["id"] = id, ["name"] = name, ["starred"] = starred };
+        }).ToList();
         var albums = Prefetch(library.GetItemList(new InternalItemsQuery(user)
         { IncludeItemTypes = [BaseItemKind.MusicAlbum], IsFavorite = true, Recursive = true }).OfType<MusicAlbum>())
             .Select(a => v2 ? ToAlbumId3WithArtist(a) : ToAlbumWithArtist(a)).ToList();

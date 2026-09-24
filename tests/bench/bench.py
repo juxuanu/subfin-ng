@@ -32,7 +32,8 @@ def call(endpoint, **params):
 albums = call("getAlbumList2", type="alphabeticalByName", size=500)["albumList2"]["album"]
 artist_id = albums[0]["artistId"]
 songs = [s["id"] for s in call("getRandomSongs", size=100)["randomSongs"]["song"]]
-call("star", albumId=[a["id"] for a in albums[:100]], id=songs[:50])
+artists = [a["id"] for i in call("getArtists")["artists"]["index"] for a in i["artist"]]
+call("star", albumId=[a["id"] for a in albums[:100]], id=songs[:50], artistId=artists[:50])
 for i, song in enumerate(songs):
     call("scrobble", id=song, submission="true", time=1_700_000_000_000 + i * 60_000)
 

@@ -61,6 +61,23 @@ public class ArtistListTests
     }
 
     [Fact]
+    public void AlbumCounts_CountAsTheArtistList_WithOneQuery()
+    {
+        var (gould, bernstein, nobody) = (Artist("Glenn Gould"), Artist("Leonard Bernstein"), Artist("Nobody"));
+        var library = Substitute.For<ILibraryManager>();
+        library.GetItemList(Arg.Any<InternalItemsQuery>()).Returns(new List<BaseItem>
+        {
+            new MusicAlbum { Name = "Goldberg Variations", AlbumArtists = ["Glenn Gould", "Johann Sebastian Bach"] },
+            new MusicAlbum { Name = "Brahms", AlbumArtists = ["Glenn Gould", "Leonard Bernstein", "glenn gould"] },
+        });
+
+        var counts = LibraryQueries.AlbumCounts(library, new User("u", "p", "r"), [gould, bernstein, nobody], null);
+
+        Assert.Equal(new Dictionary<Guid, int> { [gould.Id] = 2, [bernstein.Id] = 1, [nobody.Id] = 0 }, counts);
+        library.Received(1).GetItemList(Arg.Is<InternalItemsQuery>(q => q.AlbumArtistIds.SequenceEqual(new[] { gould.Id, bernstein.Id, nobody.Id })));
+    }
+
+    [Fact]
     public void ArtistRefs_LinkEachArtistOnce_AndSkipUnknownOnes()
     {
         var ids = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase) { ["A"] = "id-a", ["B"] = "id-b", ["Unknown"] = null };

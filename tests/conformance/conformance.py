@@ -508,6 +508,16 @@ if song_ids and test_artist and "Album One" in albums:
     got = starred_where("Jellyfin favourite removed")
     record("... and removing it in Jellyfin unstars it", got == nowhere, got)
 
+    # getStarred2's artists are ArtistID3, as getArtists' are: album count and cover too (non-ASCII name included)
+    listed = {a["name"]: a for a in artists if a["name"] in ("Test Artist", "Björk Ñandú")}
+    stars = [("artistId", a["id"]) for a in listed.values()]
+    call("star", stars, check_schema=False, label="star two artists")
+    st = (call("getStarred2", label="starred artists") or {}).get("starred2", {}).get("artist", [])
+    got = {a["name"]: (a.get("albumCount"), a.get("coverArt")) for a in st}
+    want = {n: (a.get("albumCount"), a.get("coverArt")) for n, a in listed.items()}
+    record("getStarred2 artists have getArtists' album count and cover", len(want) == 2 and got == want, (got, want))
+    call("unstar", stars, check_schema=False, label="unstar two artists")
+
 # ── share links must only reach the shared items ────────────────────────────
 if song_ids:
     r = call("createShare", {"id": song_ids[0], "description": "conformance"}, check_schema=False, label="createShare")
