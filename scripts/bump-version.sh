@@ -11,7 +11,7 @@
 # serverVersion seen by Subsonic clients: "{Build}.{Revision}.0" (e.g. "3.0.0")
 #
 # Usage: ./scripts/bump-version.sh <NEW_VERSION>
-# Example: ./scripts/bump-version.sh 12.1.6.0
+# Example: ./scripts/bump-version.sh 12.1.7.0
 
 set -euo pipefail
 
@@ -57,4 +57,3 @@ echo "Bumped ${OLD_VERSION} → ${NEW_VERSION}"
 echo "  meta.json:       $(jq -r '.version' "$META_SRC")"
 echo "  serverVersion:   ${SERVER_VERSION}  (what Subsonic clients see)"
 echo "  Plugin dir:      Subfin_${NEW_VERSION}"
-echo "  Run: ./scripts/deploy-dev.sh"

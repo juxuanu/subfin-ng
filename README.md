@@ -6,12 +6,26 @@ Requires Jellyfin **12.1** or later.
 
 ## Install
 
+1. In Jellyfin, open **Dashboard → Plugins → Manage Repositories** and add this repository:
+   ```
+   https://raw.githubusercontent.com/juxuanu/subfin-plugin/main/jellyfin-plugin-subfin-manifest.json
+   ```
+2. Back in **Plugins**, choose **Available**, open **Subfin** and install it.
+3. Restart Jellyfin.
+
+Jellyfin then offers new versions as updates, like for any other plugin.
+
+<details>
+<summary>Build it yourself instead</summary>
+
 1. Build the plugin (needs the .NET 10 SDK):
    ```sh
    dotnet publish -c Release Jellyfin.Plugin.Subsonic
    ```
 2. Copy `Jellyfin.Plugin.Subsonic/bin/Release/net10.0/publish/Jellyfin.Plugin.Subsonic.dll` and `meta.json` into a new folder `plugins/Subfin_<version>/` in Jellyfin's data directory. That's `/var/lib/jellyfin/plugins/` for the Linux packages and `/config/plugins/` in the Docker image.
 3. Restart Jellyfin.
+
+</details>
 
 ## Set up
 
@@ -50,7 +64,7 @@ In **Dashboard → Plugins → Subfin**:
 
 ## Updating
 
-Replace the two files in the plugin folder and restart the Jellyfin service, for example with `systemctl restart jellyfin` or by restarting the container. The Restart button in Jellyfin's dashboard keeps the old plugin code loaded.
+Install updates from **Plugins**, then restart the Jellyfin service, for example with `systemctl restart jellyfin` or by restarting the container. The Restart button in Jellyfin's dashboard can keep the old plugin code loaded.
 
 ## Upgrading from earlier versions
 
@@ -59,4 +73,5 @@ Versions with their own device logins (the `/subfin/` page, API at `/rest`) are 
 ## Development
 
 - `dotnet test` runs the unit tests.
+- `scripts/release.sh <version>` (on `main`) bumps the version, tags it and pushes. GitHub Actions then builds and tests it, publishes the release and adds it to the repository manifest.
 - `tests/conformance/run.sh` checks a build against a throwaway Jellyfin and the OpenSubsonic spec; `--ui` also tests the settings page in a browser. See [its README](tests/conformance/README.md).

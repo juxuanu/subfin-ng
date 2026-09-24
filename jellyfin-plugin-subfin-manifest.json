@@ -1,29 +1,12 @@
 [
   {
-    "category": "Music",
-    "description": "OpenSubsonic-to-Jellyfin compatibility layer. Use Subsonic/Navidrome clients (DSub, Substreamer, etc.) with your Jellyfin music library.",
     "guid": "4a3b2c1d-e5f6-7890-abcd-ef1234567890",
-    "imageUrl": "https://raw.githubusercontent.com/williamkray/subfin-plugin/main/logo.png",
     "name": "Subfin",
-    "overview": "Exposes an OpenSubsonic-compatible REST API at /rest/* so that Subsonic clients can browse and stream your Jellyfin music library.",
-    "owner": "williamkray",
-    "versions": [
-      {
-        "checksum": "28c67b8da76983c54a23ccd99376c77d",
-        "changelog": "0d0d6bc chore: drop obsolete publish.sh from gitignore (releases via GitHub Actions)\n900c7ca feat: create shares from the web UI with search, tabbed layout\n03d54dc chore: untrack local dev/validation scripts\nddedc63 fix: use GetMusicGenres so getGenres returns music genres (resolves #1)\n16e517e chore: ignore publish.sh (contains private server config)\n1ee4ce3 release: update manifest for v10.11.5.4 [skip ci]\n3c080dc release: bump to v10.11.5.4\n520103c Initial commit: Subfin Jellyfin plugin v10.11.5.3",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/williamkray/subfin-plugin/releases/download/v10.11.5.7/jellyfin-plugin-subfin_10.11.5.7.zip",
-        "timestamp": "2026-09-21T21:47:41Z",
-        "version": "10.11.5.7"
-      },
-      {
-        "checksum": "e8f301b7034020dff0f41299d985767d",
-        "changelog": "d7ad501 release: bump to v10.11.5.4\n5276305 Initial commit: Subfin Jellyfin plugin v10.11.5.3",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/williamkray/subfin-plugin/releases/download/v10.11.5.4/jellyfin-plugin-subfin_10.11.5.4.zip",
-        "timestamp": "2026-03-31T05:36:04Z",
-        "version": "10.11.5.4"
-      }
-    ]
+    "description": "OpenSubsonic API for Jellyfin. Use Subsonic/Navidrome clients (DSub, Substreamer, etc.) with your Jellyfin music library and Jellyfin accounts.",
+    "overview": "Exposes an OpenSubsonic-compatible API at /opensubsonic so that Subsonic clients can browse and stream your Jellyfin music library, signing in with Jellyfin accounts.",
+    "owner": "juxuanu",
+    "category": "Music",
+    "imageUrl": "https://raw.githubusercontent.com/juxuanu/subfin-plugin/main/logo.png",
+    "versions": []
   }
 ]
