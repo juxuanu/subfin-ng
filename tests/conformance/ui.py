@@ -2,7 +2,8 @@
 # requires-python = ">=3.12"
 # dependencies = ["playwright>=1.50", "requests>=2.32"]
 # ///
-"""Drives the plugin's settings page in Jellyfin's web UI (headless Firefox), as an administrator.
+"""Drives the plugin's settings page in Jellyfin's web UI (headless Firefox), as an administrator,
+and the player on a share's public page.
 
 usage: uv run ui.py <creds.env> <screenshot-dir>   (run.sh --ui runs it after the API checks)
 """
@@ -33,6 +34,13 @@ def token_ping(password):
 
 def code(resp):
     return resp.get("error", {}).get("code")
+
+
+def api(endpoint, *params):
+    """A Subsonic API call as the admin (password login)."""
+    return requests.get(f"{URL}/opensubsonic/rest/{endpoint}", timeout=30, params=[
+        ("u", creds["AU"]), ("p", creds["AP"]), ("v", "1.16.1"), ("c", "ui"), ("f", "json"), *params,
+    ]).json()["subsonic-response"]
 
 
 if not any(u["Name"] == USER for u in requests.get(f"{URL}/Users", headers=HEADERS, timeout=30).json()):
@@ -103,6 +111,31 @@ with sync_playwright() as p:
     cfg = requests.get(f"{URL}/Plugins/4a3b2c1d-e5f6-7890-abcd-ef1234567890/Configuration", headers=HEADERS, timeout=30).json()
     check("the settings form saves", cfg.get("LogRestRequests") is (not was), cfg)
     check("no script errors on the page", not errors, errors)
+
+    # A share's public page plays the shared songs in the browser
+    album = next(a for a in api("getAlbumList2", ("type", "alphabeticalByName"))["albumList2"]["album"] if a["name"] == "Double Album")
+    share = api("createShare", ("id", album["id"]))["shares"]["share"][0]
+    ids = [e["id"] for e in share["entry"]]
+    player = browser.new_page()
+    share_errors = []
+    player.on("pageerror", lambda e: share_errors.append(str(e)))
+    player.goto(share["url"])
+    player.wait_for_selector("#tracklist li", timeout=30000)
+    titles = player.locator("#tracklist .track-title").all_inner_texts()
+    check("the share page lists the shared album's songs", titles == ["Disc 1 Track 1", "Disc 1 Track 2", "Disc 2 Track 1", "Disc 2 Track 2"], titles)
+    check("... and links its M3U and ZIP", player.locator("a.download-link").count() == 2, player.locator("a.download-link").all_inner_texts())
+    # The player loads nothing before a click (preload="none", and browsers block autoplay)
+    loaded = "(id) => { const a = document.getElementById('audio'); return a.src.includes('id=' + id) && a.duration > 0 && a.error === null; }"
+    for i, name in ((0, "clicking the first song plays it"), (2, "clicking another song plays it")):
+        player.click(f"#tr-{i}")
+        try:
+            player.wait_for_function(loaded, arg=ids[i], timeout=30000)
+            check(name, player.locator(f"#tr-{i}.active").count() == 1)
+        except Exception:
+            check(name, False, player.evaluate("[document.getElementById('audio').src, String(document.getElementById('audio').error?.message)]"))
+    player.screenshot(path=OUT / "ui-3-share.png")
+    check("no script errors on the share page", not share_errors, share_errors)
+    api("deleteShare", ("id", share["id"]))
     browser.close()
 
 print(f"{len(results)} UI checks, {results.count(True)} passed, {results.count(False)} failed")

@@ -182,7 +182,7 @@ public class SubsonicController(
             "getplayqueue" => GetPlayQueue(user, format),
             "getshares" or "createshare" or "updateshare" or "deleteshare"
                 when SubsonicPlugin.Instance?.Configuration?.SharingEnabled == false
-                => ErrorResponse(format, ErrorCode.Generic, "Sharing is disabled."),
+                => ErrorResponse(format, ErrorCode.NotAuthorized, "Sharing is disabled."),
             "getshares" => GetShares(user, format),
             "createshare" => CreateShare(user, p, format),
             "updateshare" => UpdateShare(user, p, format),
@@ -339,7 +339,7 @@ public class SubsonicController(
         logger.LogInformation("[Subfin] getArtist {Name} (guid={Guid}): {Count} albums", artist.Name, guid, albums.Count);
 
         var artistId = artist.Id.ToString("N");
-        var mapped = ItemMapper.ToArtistWithAlbums(artist, albums, a => ItemMapper.ToAlbumShort(a, artistId, UserDataFor(a), StarredAt(a), ArtistIdOf));
+        var mapped = ItemMapper.ToArtistWithAlbums(artist, albums, a => ItemMapper.AsAlbumId3(ItemMapper.ToAlbumShort(a, artistId, UserDataFor(a), StarredAt(a), ArtistIdOf)));
         var json = SubsonicEnvelope.Ok(new() { ["artist"] = mapped });
         return Respond(format, json, () => XmlBuilder.Artist(mapped));
     }
@@ -490,7 +490,7 @@ public class SubsonicController(
             Limit = albumCount,
             StartIndex = albumOffset,
             Recursive = true,
-        }).OfType<MusicAlbum>().Select(ToAlbumWithArtist).ToList();
+        }).OfType<MusicAlbum>().Select(a => search2 ? ToAlbumWithArtist(a) : ToAlbumId3WithArtist(a)).ToList();
 
         var songs = library.GetItemList(new InternalItemsQuery(user)
         {
@@ -521,6 +521,7 @@ public class SubsonicController(
         var type = p.Get("type") ?? "alphabeticalByName";
         var size = Math.Min(p.GetInt("size", 10), 500);
         var offset = p.GetInt("offset", 0);
+        Func<MusicAlbum, Dictionary<string, object?>> toAlbum = v2 ? ToAlbumId3WithArtist : ToAlbumWithArtist;
 
         if (type == "recent")
         {
@@ -539,7 +540,7 @@ public class SubsonicController(
                 .Select(id => GetVisibleItem<MusicAlbum>(Guid.ParseExact(id, "N")))
                 .Where(a => a != null)
                 .Cast<MusicAlbum>()
-                .Select(ToAlbumWithArtist)
+                .Select(toAlbum)
                 .ToList();
 
             var recentJson = SubsonicEnvelope.Ok(new() { [v2 ? "albumList2" : "albumList"] = new Dictionary<string, object> { ["album"] = recentAlbums } });
@@ -583,7 +584,7 @@ public class SubsonicController(
         var folderIds = GetEffectiveFolderIds(p.MusicFolderId);
         ApplyFolderScoping(query, folderIds);
 
-        var albums = library.GetItemList(query).OfType<MusicAlbum>().Select(ToAlbumWithArtist).ToList();
+        var albums = library.GetItemList(query).OfType<MusicAlbum>().Select(toAlbum).ToList();
         var json = SubsonicEnvelope.Ok(new() { [v2 ? "albumList2" : "albumList"] = new Dictionary<string, object> { ["album"] = albums } });
         return Respond(format, json, () => XmlBuilder.AlbumList(albums, v2));
     }
@@ -1142,6 +1143,7 @@ public class SubsonicController(
     private IActionResult CreateShare(User user, QueryParams p, string format)
     {
         var ids = _query["id"].Select(s => s ?? "").Where(s => !string.IsNullOrEmpty(s)).ToList();
+        if (ids.Count == 0) return ErrorResponse(format, ErrorCode.RequiredParameterMissing, "Missing id");
         var desc = p.Get("description");
         var expiresParam = p.Get("expires");
         string? expiresAt = null;
@@ -1173,12 +1175,11 @@ public class SubsonicController(
         var id = p.Id;
         if (string.IsNullOrEmpty(id)) return ErrorResponse(format, ErrorCode.RequiredParameterMissing, "Missing id");
         if (!OwnsShare(user, id)) return ErrorResponse(format, ErrorCode.NotFound, "Share not found");
-        var desc = p.Get("description");
-        var expiresParam = p.Get("expires");
-        string? expiresAt = null;
-        if (!string.IsNullOrEmpty(expiresParam) && long.TryParse(expiresParam, out var ms) && ms > 0)
-            expiresAt = DateTimeOffset.FromUnixTimeMilliseconds(ms).ToString("o");
-        SubsonicStore.UpdateShare(id, desc, expiresAt);
+        // Only what's given changes; expires=0 removes the expiry
+        if (p.Has("description"))
+            SubsonicStore.UpdateShareDescription(id, p.Get("description"));
+        if (long.TryParse(p.Get("expires"), out var ms))
+            SubsonicStore.UpdateShareExpiry(id, ms > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(ms).ToString("o") : null);
         return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping);
     }
 
@@ -1233,7 +1234,7 @@ public class SubsonicController(
             .OfType<MusicArtist>().Select(a => new Dictionary<string, object?> { ["id"] = a.Id.ToString("N"), ["name"] = a.Name ?? "", ["starred"] = StarredAt(a) ?? a.DateCreated.ToString("o") }).ToList();
         var albums = library.GetItemList(new InternalItemsQuery(user)
         { IncludeItemTypes = [BaseItemKind.MusicAlbum], IsFavorite = true, Recursive = true })
-            .OfType<MusicAlbum>().Select(ToAlbumWithArtist).ToList();
+            .OfType<MusicAlbum>().Select(a => v2 ? ToAlbumId3WithArtist(a) : ToAlbumWithArtist(a)).ToList();
         var songs = library.GetItemList(new InternalItemsQuery(user)
         { IncludeItemTypes = [BaseItemKind.Audio], IsFavorite = true, Recursive = true })
             .OfType<Audio>().Select(ToSongWithArtist).ToList();
@@ -1553,7 +1554,7 @@ public class SubsonicController(
                 {
                     w.WriteStartElement("line", "http://subsonic.org/restapi");
                     w.WriteAttributeString("start", lineObj["start"].ToString());
-                    w.WriteAttributeString("value", lineObj["value"].ToString() ?? "");
+                    w.WriteString(lineObj["value"].ToString() ?? "");  // <line start="…">text</line>
                     w.WriteEndElement();
                 }
                 w.WriteEndElement();
@@ -1657,6 +1658,9 @@ public class SubsonicController(
                  $"&deviceId={Uri.EscapeDataString(ClientDevice(auth).Id)}";
         if (bitRate > 0) qs += $"&audioBitRate={bitRate * 1000}";
         if (timeOff > 0) qs += $"&startTimeTicks={timeOff * 10_000_000L}";
+        // Jellyfin reuses a song's transcode for the same device and play session: one play session per set
+        // of settings keeps a seek or another bitrate from getting back an earlier transcode
+        qs += $"&playSessionId=subfin-{audioCodec}-{bitRate}-{timeOff}";
 
         // Loopback URL (incl. Jellyfin's base URL): the client-facing host may be a reverse proxy,
         // a mapped port or a name this server can't resolve.
@@ -1788,6 +1792,7 @@ public class SubsonicController(
     {
         var target = p.Get("username") is { } name && name != user.Username ? userManager.GetUserByName(name) : user;
         if (target == null) return ErrorResponse(format, ErrorCode.NotFound, "User not found");
+        if (target.ProfileImage == null) return ErrorResponse(format, ErrorCode.NotFound, "The user has no avatar");
         return Redirect($"{Request.PathBase}/Users/{target.Id:N}/Images/Primary");
     }
 
@@ -1916,6 +1921,9 @@ public class SubsonicController(
     private Dictionary<string, object?> ToAlbumWithArtist(MusicAlbum a) =>
         ItemMapper.ToAlbumShort(a, ResolveArtistTagId(a.AlbumArtist ?? a.AlbumArtists.FirstOrDefault()), UserDataFor(a), StarredAt(a), ArtistIdOf);
 
+    /// <summary>An album for the ID3 endpoints (getArtist, getAlbumList2, search3, getStarred2).</summary>
+    private Dictionary<string, object?> ToAlbumId3WithArtist(MusicAlbum a) => ItemMapper.AsAlbumId3(ToAlbumWithArtist(a));
+
     // Per-request: when the current user starred items through Subfin.
     private Dictionary<string, string>? _starredDates;
 
@@ -1997,6 +2005,8 @@ public class QueryParams(IQueryCollection q)
     public int MaxBitRate => GetInt("maxBitRate", 0) > 0 ? GetInt("maxBitRate", 0) : GetInt("bitRate", 0);
     public int TimeOffset => GetInt("timeOffset", 0);
     public string? Get(string key) { var v = q.First(key); return string.IsNullOrEmpty(v) ? null : v; }
+    /// <summary>Whether the parameter was sent at all, even empty.</summary>
+    public bool Has(string key) => q.ContainsKey(key);
     public int GetInt(string key, int def) => int.TryParse(q.First(key), out var v) ? v : def;
     public long GetLong(string key, long def) => long.TryParse(q.First(key), out var v) ? v : def;
 }

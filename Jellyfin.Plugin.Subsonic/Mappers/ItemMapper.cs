@@ -107,6 +107,13 @@ public static class ItemMapper
         return result;
     }
 
+    /// <summary>
+    /// The album as an AlbumID3, for the ID3 endpoints: without title/album/parent/isDir, which only
+    /// make it a valid Child for the folder-based ones.
+    /// </summary>
+    public static Dictionary<string, object?> AsAlbumId3(Dictionary<string, object?> album) =>
+        album.Where(kv => kv.Key is not ("title" or "album" or "parent" or "isDir")).ToDictionary();
+
     /// <param name="mapSong">Maps each track; songs carry their own track artists, not the album artist.</param>
     /// <param name="artistIdOf">Artist name to id, for the OpenSubsonic artists list; without it the list is left out.</param>
     public static Dictionary<string, object?> ToAlbum(MusicAlbum album, IEnumerable<Audio> songs, Func<Audio, Dictionary<string, object?>> mapSong, string? resolvedArtistId = null, UserItemData? userData = null, string? starredAt = null,

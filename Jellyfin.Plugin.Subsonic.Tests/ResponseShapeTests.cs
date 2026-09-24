@@ -43,8 +43,9 @@ public class ResponseShapeTests
     [Fact]
     public void Extensions_AreRealSpecExtensions()
     {
-        var names = Root(XmlBuilder.OpenSubsonicExtensions())["openSubsonicExtensions", Ns]!
-            .ChildNodes.Cast<XmlElement>().Select(e => e.GetAttribute("name")).ToList();
+        // one <openSubsonicExtensions name="…"> element per extension, as the JSON's array
+        var names = Root(XmlBuilder.OpenSubsonicExtensions()).GetElementsByTagName("openSubsonicExtensions", Ns)
+            .Cast<XmlElement>().Select(e => e.GetAttribute("name")).ToList();
         Assert.Contains("formPost", names);
         // Logins are Jellyfin passwords; there are no API keys to hand out
         Assert.DoesNotContain("apiKeyAuthentication", names);

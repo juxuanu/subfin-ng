@@ -8,7 +8,8 @@ usage: uv run conformance.py <creds.env> <openapi-dir> <out.json>
 Every JSON response is validated against the endpoint's schema in the OpenSubsonic OpenAPI spec;
 behavioural checks compare results with the generated test library (make-media.sh). Run via run.sh.
 """
-import hashlib, json, pathlib, secrets, sys, xml.etree.ElementTree as ET
+import base64, hashlib, io, json, pathlib, re, secrets, subprocess, sys, time, zipfile, xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 
 import requests
 from jsonschema import Draft7Validator
@@ -316,6 +317,26 @@ if song_ids:
     s = call("stream", [("id", song_ids[0]), ("format", "mp3"), ("maxBitRate", "128")], raw_resp=True)
     record("stream transcoded format=mp3: 200 audio/mpeg", s.status_code == 200 and s.headers.get("content-type", "").startswith("audio/mpeg"),
            (s.status_code, s.headers.get("content-type"), len(s.content)))
+
+    def probe(body):
+        """(duration in seconds, bitrate in bit/s) of an mp3, by ffprobe (from a file: a pipe has no duration)."""
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".mp3") as f:
+            f.write(body)
+            f.flush()
+            out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration,bit_rate", "-of", "json", f.name],
+                                 capture_output=True).stdout
+        fmt = json.loads(out or b"{}").get("format", {})
+        return float(fmt.get("duration") or 0), int(fmt.get("bit_rate") or 0)
+    got = probe(s.content)
+    record("... at the maxBitRate asked for (128 kbps)", 115_000 <= got[1] <= 141_000, got)
+    # As a player does with one song (Song 3, 12 s): play it transcoded, seek, then lower the bitrate.
+    # Each needs its own transcode, not the earlier one of the same song.
+    full = probe(call("stream", [("id", song_ids[2]), ("format", "mp3")], raw_resp=True).content)
+    seek = probe(call("stream", [("id", song_ids[2]), ("format", "mp3"), ("timeOffset", "4")], raw_resp=True).content)
+    low = probe(call("stream", [("id", song_ids[2]), ("format", "mp3"), ("maxBitRate", "64")], raw_resp=True).content)
+    record("stream timeOffset=4 starts 4 s in (the 12 s song plays for ~8 s)", 11 <= full[0] <= 13 and 7 <= seek[0] <= 9, (full, seek))
+    record("stream maxBitRate=64 after a full-rate stream of the same song: 64 kbps", 56_000 <= low[1] <= 72_000, (full, low))
     d = call("download", {"id": song_ids[0]}, raw_resp=True)
     record("download: 200 with body", d.status_code == 200 and len(d.content) > 1000, (d.status_code, d.headers.get("content-type"), len(d.content)))
 for name in ("Album One", "Double Album"):
@@ -344,8 +365,7 @@ if {"Double Album", "Compilation"} <= set(albums):
     record("an artist with no image anywhere -> error 70", got and got[1] == 200 and got[2] == 70, got)
     ta = next((x for x in artists if x["name"] == "Test Artist"), None)
     if ta:
-        import base64, subprocess
-        jpg = subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=yellow:s=200x200", "-frames:v", "1",
+        jpg =subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=yellow:s=200x200", "-frames:v", "1",
                               "-f", "image2", "-c:v", "mjpeg", "-"], capture_output=True).stdout
         jf("POST", f"/Items/{ta['id']}/Images/Primary", headers={"Content-Type": "image/jpeg"}, data=base64.b64encode(jpg))
         got = artist_cover("Test Artist")
@@ -461,8 +481,7 @@ if song_ids:
             call("deletePlaylist", {"id": r["playlist"]["id"]}, check_schema=False, label="share-cleanup")
 
         # the public share page, its playlist and ZIP download
-        import io, zipfile
-        page = requests.get(share["url"], timeout=30)
+        page =requests.get(share["url"], timeout=30)
         record("share page: 200 HTML streaming through /opensubsonic/rest",
                page.status_code == 200 and "/opensubsonic/rest/stream.view" in page.text and f"/opensubsonic/share/{share['id']}/m3u" in page.text,
                (page.status_code, page.text[:200]))
@@ -484,6 +503,167 @@ if song_ids:
         record("expired share link can't sign in -> error 40", err(r) == 40, r, "security")
     else:
         record("createShare returned a share URL with secret", False, r)
+
+# ── shares of albums, playlists and artists; getShares; the owner's changes ─
+PLUGIN_ID = "4a3b2c1d-e5f6-7890-abcd-ef1234567890"
+
+
+def create_share(ids, auth_params=None, label="createShare", check_schema=True, **params):
+    r = call("createShare", [("id", i) for i in ids] + list(params.items()), auth_params=auth_params, check_schema=check_schema, label=label)
+    return ((r or {}).get("shares", {}).get("share") or [None])[0]
+
+
+def shares(auth_params=None, label="getShares"):
+    return {x["id"]: x for x in (call("getShares", auth_params=auth_params, check_schema=False, label=label) or {}).get("shares", {}).get("share", [])}
+
+
+def share_link(sh):
+    """The credentials a share link signs in with, as its page and M3U use them."""
+    from urllib.parse import unquote
+    return {"u": f"share_{sh['id']}", "p": unquote(sh["url"].partition("secret=")[2]), "v": "1.16.1", "c": "conformance", "f": "json"}
+
+
+def share_page(sh, sub=""):
+    """The public share page, or its "/m3u" or "/download"."""
+    return requests.get(sh["url"].replace(f"/{sh['id']}?", f"/{sh['id']}{sub}?"), timeout=30)
+
+
+def page_tracks(html):
+    """Titles of the tracks a share page plays."""
+    m = re.search(r"const tracks = (\[.*?\]);", html)
+    return [t["title"] for t in json.loads(m.group(1))] if m else None
+
+
+def m3u_ids(text):
+    return re.findall(r"stream\.view\?id=([0-9a-f]+)", text)
+
+
+def zip_contents(resp):
+    """(file names, the files its playlist.m3u8 lists) of a share ZIP."""
+    try:
+        z = zipfile.ZipFile(io.BytesIO(resp.content))
+        return z.namelist(), [l for l in z.read("playlist.m3u8").decode().splitlines() if l and not l.startswith("#")]
+    except (zipfile.BadZipFile, KeyError) as e:
+        return repr(e), None
+
+
+def iso_ms(ms):
+    return datetime.fromtimestamp(ms / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def seconds(iso_time):
+    try:
+        return datetime.strptime(iso_time[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
+    except (TypeError, ValueError):
+        return 0
+
+
+def plugin_config(**changes):
+    cfg = jf("GET", f"/Plugins/{PLUGIN_ID}/Configuration").json()
+    jf("POST", f"/Plugins/{PLUGIN_ID}/Configuration", json={**cfg, **changes})
+
+
+if song_ids and test_artist and {"Album One", "Double Album", "Compilation"} <= set(albums):
+    double = [x["id"] for x in call("getAlbum", {"id": albums["Double Album"]["id"]}, check_schema=False, label="double songs").get("album", {}).get("song", [])]
+    comp_first = (comp.get("song") or [{}])[0].get("id")
+
+    # an album: what createShare answers, what getShares lists, and what the link serves
+    started, expires = time.time(), (int(time.time()) + 3600) * 1000
+    sh = create_share([albums["Double Album"]["id"]], label="createShare album", description="The double album", expires=expires)
+    if sh:
+        record("an album share holds its songs, in disc order", [e["id"] for e in sh.get("entry", [])] == double,
+               [e.get("title") for e in sh.get("entry", [])])
+        record("createShare answers with the share: its link, owner, description, dates and no visits yet",
+               sh.get("url", "").startswith(f"{URL}/opensubsonic/share/{sh['id']}?secret=") and sh.get("username") == SU
+               and sh.get("description") == "The double album" and abs(seconds(sh.get("created")) - started) < 120
+               and sh.get("expires") == iso_ms(expires) and sh.get("visitCount") == 0, sh)
+        listed = {x["id"]: x for x in (call("getShares") or {}).get("shares", {}).get("share", [])}
+        record("getShares lists it just as createShare described it", listed.get(sh["id"]) == sh, listed.get(sh["id"]))
+        record("getShares lists only the user's own shares", all(x.get("username") == SU for x in listed.values()),
+               [x.get("username") for x in listed.values()], "security")
+
+        link = share_link(sh)
+        page = share_page(sh)
+        record("the album's share page lists its 4 songs", page.status_code == 200 and page_tracks(page.text) ==
+               ["Disc 1 Track 1", "Disc 1 Track 2", "Disc 2 Track 1", "Disc 2 Track 2"], (page.status_code, page_tracks(page.text)))
+        m3u = share_page(sh, "/m3u")
+        record("... its M3U lists them in order", m3u.status_code == 200 and m3u_ids(m3u.text) == double, m3u_ids(m3u.text))
+        names, listing = zip_contents(share_page(sh, "/download"))
+        want = ["01 Track.flac", "02 Track.flac", "01 Track (1).flac", "02 Track (1).flac"]
+        record("... its ZIP keeps songs with the same file name apart (both discs have 01 Track.flac)",
+               isinstance(names, list) and sorted(names) == sorted(want + ["playlist.m3u8"]), names)
+        record("... and its playlist lists them in order", listing == want, listing)
+        record("the link plays every song of the album",
+               all(requests.get(f"{API}/stream", params={**link, "id": i}, timeout=30).status_code == 200 for i in double))
+        s = requests.get(f"{API}/stream", params={**link, "id": double[0], "format": "mp3"}, timeout=30)
+        record("... transcoded too", s.status_code == 200 and s.headers.get("content-type", "").startswith("audio/mpeg"),
+               (s.status_code, s.headers.get("content-type")))
+        d = requests.get(f"{API}/download", params={**link, "id": double[0]}, timeout=30)
+        record("... and downloads them", d.status_code == 200 and d.headers.get("content-type", "").startswith("audio/") and len(d.content) > 1000,
+               (d.status_code, d.headers.get("content-type")))
+        visits = shares(label="share visits").get(sh["id"], {}).get("visitCount")
+        record("opening the page and its M3U count as visits (the ZIP and playing don't)", visits == 2, visits)
+
+        # the owner's changes: each field alone, expiry and its removal, deletion
+        call("updateShare", {"id": sh["id"], "description": "Renamed"}, label="updateShare description")
+        now = shares(label="after description").get(sh["id"], {})
+        record("updateShare with only a description keeps the expiry", (now.get("description"), now.get("expires")) == ("Renamed", sh["expires"]),
+               (now.get("description"), now.get("expires")))
+        later = expires + 86_400_000
+        call("updateShare", {"id": sh["id"], "expires": later}, label="updateShare expires")
+        now = shares(label="after expires").get(sh["id"], {})
+        record("updateShare with only an expiry keeps the description", (now.get("description"), now.get("expires")) == ("Renamed", iso_ms(later)),
+               (now.get("description"), now.get("expires")))
+        call("updateShare", {"id": sh["id"], "expires": 1000}, check_schema=False, label="updateShare to the past")
+        record("a share updated to expire in the past: its page -> 410", share_page(sh).status_code == 410)
+        call("updateShare", {"id": sh["id"], "expires": 0}, check_schema=False, label="updateShare expires=0")
+        record("expires=0 removes the expiry: the page and link work again",
+               share_page(sh).status_code == 200 and ok(call("ping", auth_params=link, check_schema=False, label="unexpired link")))
+        record("deleteShare", ok(call("deleteShare", {"id": sh["id"]})))
+        record("a deleted share is gone: not listed, its page 404 and its link can't sign in",
+               sh["id"] not in shares(label="after delete") and share_page(sh).status_code == 404
+               and err(call("ping", auth_params=link, check_schema=False, label="deleted link")) == 40, kind="security")
+
+    # a playlist, an artist, several items at once
+    r = call("createPlaylist", [("name", "to share"), ("songId", song_ids[2]), ("songId", song_ids[0])], check_schema=False, label="playlist to share")
+    plid = (r or {}).get("playlist", {}).get("id")
+    if plid:
+        psh = create_share([plid], check_schema=False, label="createShare playlist")
+        record("a playlist share holds the playlist's songs, in its order",
+               [e["id"] for e in (psh or {}).get("entry", [])] == [song_ids[2], song_ids[0]], psh)
+        if psh:
+            call("deleteShare", {"id": psh["id"]}, check_schema=False, label="playlist share cleanup")
+        call("deletePlaylist", {"id": plid}, check_schema=False, label="playlist to share cleanup")
+    artsh = create_share([test_artist["id"]], check_schema=False, label="createShare artist")
+    record("an artist share holds every song of the artist's albums",
+           sorted(e["id"] for e in (artsh or {}).get("entry", [])) == sorted(song_ids + double), artsh)
+    if artsh:
+        call("deleteShare", {"id": artsh["id"]}, check_schema=False, label="artist share cleanup")
+    msh = create_share([albums["Album One"]["id"], song_ids[1], comp_first], check_schema=False, label="createShare several")
+    record("a share of several items holds each song once, in the order given",
+           [e["id"] for e in (msh or {}).get("entry", [])] == song_ids + [comp_first], msh)
+    r = call("createShare", check_schema=False, label="createShare without id")
+    record("createShare without id -> error 10", err(r) == 10, r, "spec")
+    r = call("createShare", {"id": secrets.token_hex(16)}, check_schema=False, label="createShare unknown id")
+    record("createShare of an unknown id -> error 70", err(r) == 70, r, "spec")
+
+    # sharing turned off on the plugin page
+    if msh:
+        plugin_config(SharingEnabled=False)
+        try:
+            r = call("getShares", check_schema=False, label="sharing off: getShares")
+            record("with sharing turned off, getShares -> error 50", err(r) == 50, r)
+            r = call("createShare", {"id": song_ids[0]}, check_schema=False, label="sharing off: createShare")
+            record("... createShare -> error 50", err(r) == 50, r)
+            u = (call("getUser", {"username": SU}, check_schema=False, label="sharing off: getUser") or {}).get("user", {})
+            record("... getUser says shareRole false", u.get("shareRole") is False, u)
+            record("... share pages are gone (404)", share_page(msh).status_code == 404, kind="security")
+            r = call("ping", auth_params=share_link(msh), check_schema=False, label="sharing off: link")
+            record("... and links can't sign in -> error 40", err(r) == 40, r, "security")
+        finally:
+            plugin_config(SharingEnabled=True)
+        record("turning sharing back on brings the links back", share_page(msh).status_code == 200)
+        call("deleteShare", {"id": msh["id"]}, check_schema=False, label="several share cleanup")
 
 r = call("getAlbum", {"id": secrets.token_hex(16)}, label="error envelope")  # schema-checks a failure response
 
@@ -539,8 +719,7 @@ r = call("ping", auth_params=pw(XU, XP + "2"), label="disabled while signed in")
 record("disabling a signed-in account takes effect at once -> error 50", err(r) == 50, r, "security")
 set_policy(XU, IsDisabled=False)
 set_policy(XU, AccessSchedules=[{"DayOfWeek": "Everyday", "StartHour": 0, "EndHour": 0.5, "UserId": user_ids[XU]}])
-from datetime import datetime as _dt, timezone as _tz
-if _dt.now(_tz.utc).hour >= 1:  # allowed 00:00-00:30 server time (the container runs on UTC)
+if datetime.now(timezone.utc).hour >= 1:  # allowed 00:00-00:30 server time (the container runs on UTC)
     r = call("ping", auth_params=pw(XU, XP + "2"), label="outside schedule")
     record("outside the account's access schedule -> error 50", err(r) == 50, r, "security")
 for i in range(3):
@@ -652,10 +831,46 @@ if song_ids:
         record("the owner's share is untouched", mine is not None and mine.get("description") != "mine now", mine)
         call("deleteShare", {"id": ash}, auth_params=admin(), check_schema=False, label="admin share cleanup")
 
+# ── a share follows its owner's account ─────────────────────────────────────
+HU, HP = creds["HU"], creds["HP"]
+hsh = create_share([song_ids[0]], auth_params=pw(HU, HP), check_schema=False, label="createShare as sharer") if song_ids else None
+if hsh:
+    def through_link(ep, **params):
+        """The Subsonic error code of a request made with the share link, or its HTTP status."""
+        s = requests.get(f"{API}/{ep}", params={**share_link(hsh), **params}, timeout=30)
+        try:
+            return s.json()["subsonic-response"]["error"]["code"]
+        except (ValueError, KeyError):
+            return s.status_code
+
+    set_policy(HU, EnableContentDownloading=False)
+    page = share_page(hsh)
+    record("owner may not download: the share page offers no ZIP", page.status_code == 200 and "/download?" not in page.text, page.status_code, "security")
+    record("... the ZIP -> 403", share_page(hsh, "/download").status_code == 403, kind="security")
+    record("... downloading through the link -> error 50", through_link("download", id=song_ids[0]) == 50, kind="security")
+    record("... but the link still plays", through_link("stream", id=song_ids[0]) == 200)
+    set_policy(HU, EnableContentDownloading=True)
+
+    set_policy(HU, IsDisabled=True)
+    record("owner disabled: the share page -> 403", share_page(hsh).status_code == 403, kind="security")
+    record("... its M3U -> 403", share_page(hsh, "/m3u").status_code == 403, kind="security")
+    record("... and the link can't play -> error 50", through_link("stream", id=song_ids[0]) == 50, kind="security")
+    set_policy(HU, IsDisabled=False)
+
+    restricted_lib = next(f["ItemId"] for f in jf("GET", "/Library/VirtualFolders").json() if f["Name"] == "Restricted")
+    set_policy(HU, EnableAllFolders=False, EnabledFolders=[restricted_lib])
+    page = share_page(hsh)
+    record("owner lost access to the shared song's library: the page lists nothing", page.status_code == 200 and page_tracks(page.text) == [],
+           (page.status_code, page_tracks(page.text)), "security")
+    record("... the M3U lists nothing", m3u_ids(share_page(hsh, "/m3u").text) == [], kind="security")
+    record("... the link can't play it -> error 70", through_link("stream", id=song_ids[0]) == 70, kind="security")
+    record("... and getShares shows no songs", not shares(auth_params=pw(HU, HP), label="sharer shares").get(hsh["id"], {}).get("entry"), kind="security")
+    set_policy(HU, EnableAllFolders=True, EnabledFolders=[])
+    record("with access back, the page lists the song again", page_tracks(share_page(hsh).text) == ["Song 1"], page_tracks(share_page(hsh).text))
+    call("deleteShare", {"id": hsh["id"]}, auth_params=pw(HU, HP), check_schema=False, label="sharer share cleanup")
+
 # ── data details ────────────────────────────────────────────────────────────
 if song_ids:
-    import time
-    from datetime import datetime, timezone
     iso = lambda s: datetime.strptime(s[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
     r = call("getSong", {"id": song_ids[0]}, check_schema=False, label="song path")
     record("song path is relative to its library", (r or {}).get("song", {}).get("path") == "Test Artist/Album One (2001)/01 Song 1.flac",
@@ -679,6 +894,53 @@ if song_ids:
            [g.get("playCount") for g in got] == [1, 1] and got[0].get("played", "").startswith("2023-11-14T22:13:20") and got[1].get("played", "").startswith("2023-11-14T22:18:20"),
            [(g.get("playCount"), g.get("played")) for g in got])
 
+# ── lyrics: 01 Song 1.lrc (synced), 02 Song 2.txt (plain), 01 Secret.lrc (Restricted library) ──
+if song_ids:
+    r = call("getLyricsBySongId", {"id": song_ids[0]}, label="synced lyrics")
+    sl = ((r or {}).get("lyricsList", {}).get("structuredLyrics") or [{}])[0]
+    record("synced lyrics: the LRC's lines and start times",
+           sl.get("synced") is True and [(l.get("start"), l.get("value")) for l in sl.get("line", [])] == [(500, "First line"), (1500, "Second line")], sl)
+    record("... with the song's artist and title", (sl.get("displayArtist"), sl.get("displayTitle")) == ("Test Artist", "Song 1"), sl)
+    r = call("getLyricsBySongId", {"id": song_ids[1]}, label="plain lyrics")
+    sl = ((r or {}).get("lyricsList", {}).get("structuredLyrics") or [{}])[0]
+    lines = [l.get("value") for l in sl.get("line", [])]
+    while lines and not lines[-1]:  # Jellyfin keeps the file's final newline as an empty last line
+        lines.pop()
+    record("plain lyrics: unsynced, the file's lines", sl.get("synced") is False and lines == ["Plain first line", "Plain second line"], sl)
+    r = call("getLyricsBySongId", {"id": song_ids[2]}, check_schema=False, label="no lyrics")
+    record("a song without lyrics has none", ok(r) and not r.get("lyricsList", {}).get("structuredLyrics"), r)
+    r = call("getLyrics", {"artist": "Test Artist", "title": "Song 1"})
+    record("getLyrics finds a song's lyrics by artist and title",
+           (r or {}).get("lyrics") == {"artist": "Test Artist", "title": "Song 1", "value": "First line\nSecond line"}, r)
+    r = call("getLyrics", {"artist": "Hidden Artist", "title": "Secret"}, check_schema=False, label="getLyrics restricted")
+    record("getLyrics doesn't search libraries the user can't access", ok(r) and not r.get("lyrics", {}).get("value"), r, "security")
+    r = call("getLyrics", {"artist": "Hidden Artist", "title": "Secret"}, auth_params=admin(), check_schema=False, label="getLyrics admin")
+    record("... while the admin finds them", (r or {}).get("lyrics", {}).get("value") == "Secret words", r)
+
+# ── avatars: the user's Jellyfin picture ────────────────────────────────────
+def avatar(**params):
+    """(HTTP status, content type, Subsonic error code) of getAvatar, following its redirect."""
+    a = requests.get(f"{API}/getAvatar", params={**auth(), **params}, timeout=30)
+    try:
+        code = a.json()["subsonic-response"]["error"]["code"]
+    except (ValueError, KeyError):
+        code = None
+    return a.status_code, a.headers.get("content-type", ""), code
+
+
+got = avatar(username=SU)
+record("getAvatar of a user without a picture -> error 70", got[2] == 70, got)
+picture = subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=orange:s=64x64", "-frames:v", "1",
+                          "-f", "image2", "-c:v", "mjpeg", "-"], capture_output=True).stdout
+up = jf("POST", "/UserImage", params={"userId": user_ids[SU]}, headers={"Content-Type": "image/jpeg"}, data=base64.b64encode(picture), check=False)
+if up.ok:
+    got = avatar(username=SU)
+    record("getAvatar returns the user's Jellyfin picture", got[0] == 200 and got[1].startswith("image/"), got)
+else:
+    record("giving the user a Jellyfin picture (for getAvatar)", False, (up.status_code, up.text[:200]))
+got = avatar(username="nobody")
+record("getAvatar of an unknown user -> error 70", got[2] == 70, got)
+
 # ── base URL (Jellyfin behind a path prefix) ────────────────────────────────
 if creds.get("BASEURL") and song_ids and "Album One" in albums:
     B = creds["BASEURL"]
@@ -691,18 +953,24 @@ if creds.get("BASEURL") and song_ids and "Album One" in albums:
     if surl:
         page = requests.get(surl, timeout=30).text
         record("share page links include the base URL", f'href="{B}/opensubsonic/share/' in page and f"{B}/opensubsonic/rest/stream" in page, page[:200])
+    a = requests.get(f"{API}/getAvatar", params={**auth(), "username": SU}, allow_redirects=False, timeout=30)
+    record("getAvatar redirect keeps the base URL", a.status_code in (301, 302, 307) and a.headers.get("location", "").startswith(f"{B}/"),
+           (a.status_code, a.headers.get("location")))
 
 # ── misc ─────────────────────────────────────────────────────────────────────
 call("getUser", {"username": SU})
 call("getScanStatus")
 call("getNowPlaying")
 if test_artist:
+    call("getArtistInfo", {"id": test_artist["id"]})
     call("getArtistInfo2", {"id": test_artist["id"]})
     call("getTopSongs", {"artist": "Test Artist"})
 if song_ids:
+    call("getSimilarSongs", {"id": test_artist["id"] if test_artist else song_ids[0]})
     call("getSimilarSongs2", {"id": test_artist["id"] if test_artist else song_ids[0]})
     call("getLyricsBySongId", {"id": song_ids[0]})
 if "Album One" in albums:
+    call("getAlbumInfo", {"id": albums["Album One"]["id"]})
     call("getAlbumInfo2", {"id": albums["Album One"]["id"]})
 
 # Artist and album details come from Jellyfin's own metadata (no Last.fm)
@@ -729,6 +997,111 @@ r = call("getAlbum", {"id": secrets.token_hex(16)}, check_schema=False, label="g
 record("getAlbum unknown id -> error 70", err(r) == 70, r)
 r = call("getAlbum", check_schema=False, label="getAlbum-noid")
 record("getAlbum without id -> error 10", err(r) == 10, r)
+
+# ── XML carries what JSON does ──────────────────────────────────────────────
+# Subsonic's JSON is its XML read this way: attributes and child elements become keys, repeated
+# elements arrays, and an element's text "value" (an element with nothing but text is that text).
+# Only the JSON is checked against the spec's schemas, so the XML (built separately) must match it.
+NS = "{http://subsonic.org/restapi}"
+VOLATILE = {"lastModified", "minutesAgo", "similarArtist"}  # change between the two requests (Jellyfin's similar items do too)
+
+
+def from_xml(el):
+    d = {("@value" if k == "value" else k): v for k, v in el.attrib.items()}  # text goes in the element, not a value attribute
+    for child in el:
+        tag = child.tag.removeprefix(NS)
+        if tag in d and not isinstance(d[tag], list):  # an attribute and elements of the same name: JSON can't have both
+            d["@" + tag] = d.pop(tag)
+        d.setdefault(tag, []).append(from_xml(child))
+    if not d:
+        return el.text or ""
+    if el.text:
+        d["value"] = el.text
+    return d
+
+
+def as_text(v):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, dict):
+        return {k: as_text(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [as_text(x) for x in v]
+    return str(v)
+
+
+def differences(j, x, path=""):
+    if isinstance(x, list) and not isinstance(j, list):  # XML can't tell one child from a list of one
+        j = [j]
+    if isinstance(j, dict) and isinstance(x, dict):
+        out = []
+        for k in sorted((set(j) | set(x)) - VOLATILE):
+            a, b = j.get(k), x.get(k)
+            if a in (None, "", [], {}) and b in (None, "", [], {}):
+                continue
+            if a is None or b is None:
+                out.append(f"{path}/{k} only in {'XML' if a is None else 'JSON'}: {str(b if a is None else a)[:80]}")
+            else:
+                out += differences(a, b, f"{path}/{k}")
+        return out
+    if isinstance(j, list) and isinstance(x, list):
+        if len(j) != len(x):
+            return [f"{path}: {len(j)} in JSON, {len(x)} in XML"]
+        return [d for i, (a, b) in enumerate(zip(j, x)) for d in differences(a, b, f"{path}[{i}]")]
+    try:
+        if j == x or float(j) == float(x):
+            return []
+    except (TypeError, ValueError):
+        pass
+    return [f"{path}: JSON {str(j)[:60]!r}, XML {str(x)[:60]!r}"]
+
+
+def xml_matches_json(label, endpoint, params=None, auth_params=None):
+    base = list((auth_params or auth()).items())
+    params = list((params or {}).items())
+    j = requests.get(f"{API}/{endpoint}", params=base + params, timeout=30)
+    x = requests.get(f"{API}/{endpoint}", params=[(k, "xml" if k == "f" else v) for k, v in base] + params, timeout=30)
+    try:
+        d = differences(as_text(j.json()["subsonic-response"]), from_xml(ET.fromstring(x.content)))
+    except Exception as e:  # a response that isn't JSON or XML fails this check, not the suite
+        d = [f"{e!r}: {x.text[:120]}"]
+    record(f"XML matches JSON: {label}", not d, "; ".join(d[:4]), "spec")
+
+
+if song_ids and test_artist and {"Album One", "Double Album"} <= set(albums):
+    # starred items, a playlist and a share for the lists to show
+    call("star", [("id", song_ids[0]), ("albumId", albums["Album One"]["id"]), ("artistId", test_artist["id"])], check_schema=False, label="xml: star")
+    xpl = (call("createPlaylist", [("name", "XML"), ("songId", song_ids[0]), ("songId", song_ids[1])], check_schema=False, label="xml: playlist")
+           or {}).get("playlist", {}).get("id")
+    xsh = create_share([albums["Album One"]["id"]], check_schema=False, label="xml: share", description="for XML")
+    for label, endpoint, params, *who in [
+        ("ping", "ping", {}), ("getLicense", "getLicense", {}), ("getOpenSubsonicExtensions", "getOpenSubsonicExtensions", {}),
+        ("getMusicFolders", "getMusicFolders", {}), ("getIndexes", "getIndexes", {}), ("getArtists", "getArtists", {}),
+        ("getArtist", "getArtist", {"id": test_artist["id"]}), ("getMusicDirectory of an artist", "getMusicDirectory", {"id": test_artist["id"]}),
+        *[(f"getAlbum({name})", "getAlbum", {"id": a["id"]}) for name, a in albums.items()],
+        ("getMusicDirectory of an album", "getMusicDirectory", {"id": albums["Double Album"]["id"]}),
+        ("getSong", "getSong", {"id": song_ids[0]}),
+        ("getAlbumList", "getAlbumList", {"type": "alphabeticalByName"}), ("getAlbumList2", "getAlbumList2", {"type": "alphabeticalByName"}),
+        ("getGenres", "getGenres", {}), ("getSongsByGenre", "getSongsByGenre", {"genre": "Jazz"}),
+        ("search2", "search2", {"query": "Song"}), ("search3", "search3", {"query": ""}),
+        ("getStarred", "getStarred", {}), ("getStarred2", "getStarred2", {}),
+        ("getPlaylists", "getPlaylists", {}), ("getPlaylist", "getPlaylist", {"id": xpl}), ("getPlayQueue", "getPlayQueue", {}),
+        ("getShares", "getShares", {}), ("getUser", "getUser", {"username": SU}), ("getUsers", "getUsers", {}, admin()),
+        ("getScanStatus", "getScanStatus", {}), ("getNowPlaying", "getNowPlaying", {}),
+        ("getArtistInfo", "getArtistInfo", {"id": test_artist["id"]}), ("getArtistInfo2", "getArtistInfo2", {"id": test_artist["id"]}),
+        ("getAlbumInfo", "getAlbumInfo", {"id": albums["Album One"]["id"]}), ("getAlbumInfo2", "getAlbumInfo2", {"id": albums["Album One"]["id"]}),
+        ("getTopSongs", "getTopSongs", {"artist": "Test Artist"}),
+        ("getLyrics", "getLyrics", {"artist": "Test Artist", "title": "Song 1"}),
+        ("getLyricsBySongId, synced", "getLyricsBySongId", {"id": song_ids[0]}),
+        ("getLyricsBySongId, plain", "getLyricsBySongId", {"id": song_ids[1]}),
+        ("an error", "getAlbum", {"id": secrets.token_hex(16)}),
+    ]:
+        xml_matches_json(label, endpoint, params, *who)
+    call("unstar", [("id", song_ids[0]), ("albumId", albums["Album One"]["id"]), ("artistId", test_artist["id"])], check_schema=False, label="xml: unstar")
+    if xpl:
+        call("deletePlaylist", {"id": xpl}, check_schema=False, label="xml: playlist cleanup")
+    if xsh:
+        call("deleteShare", {"id": xsh["id"]}, check_schema=False, label="xml: share cleanup")
 
 # ── report ───────────────────────────────────────────────────────────────────
 pathlib.Path(sys.argv[3]).write_text(json.dumps({"results": results, "raw": raw}, indent=1, ensure_ascii=False))

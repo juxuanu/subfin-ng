@@ -29,9 +29,20 @@ jobs:
         run: dotnet test Jellyfin.Plugin.Subsonic.Tests --nologo
 
   conformance:
-    name: Conformance
+    name: Conformance (${{ matrix.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: served at /
+            id: root
+            args: ''
+          # behind a path-based reverse proxy, plus the settings page and share player in a browser
+          - name: under /jellyfin, with the UI
+            id: base-url-ui
+            args: --base-url /jellyfin --ui
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,13 +60,19 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends podman ffmpeg
 
+      - name: Install Firefox for the UI checks
+        if: contains(matrix.args, '--ui')
+        run: uv run -q --with playwright python -m playwright install --with-deps firefox
+
       - name: Conformance suite
-        run: tests/conformance/run.sh
+        run: tests/conformance/run.sh ${{ matrix.args }}
 
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: conformance-report
-          path: tests/conformance/.work/report.json
+          name: conformance-${{ matrix.id }}
+          path: |
+            tests/conformance/.work/report.json
+            tests/conformance/.work/ui-*.png
           if-no-files-found: ignore

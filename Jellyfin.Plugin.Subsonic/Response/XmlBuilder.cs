@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Xml;
+using Jellyfin.Plugin.Subsonic.Mappers;
 
 namespace Jellyfin.Plugin.Subsonic.Response;
 
@@ -130,22 +131,17 @@ public static class XmlBuilder
         w.WriteEndElement();
     });
 
+    // One <openSubsonicExtensions name="…"> per extension, its versions as <versions> elements (the JSON's array)
     public static string OpenSubsonicExtensions() => OkEnvelope(w =>
     {
-        w.WriteStartElement("openSubsonicExtensions", Ns);
         foreach (var (name, versions) in SubsonicConstants.Extensions)
         {
-            w.WriteStartElement("extension", Ns);
+            w.WriteStartElement("openSubsonicExtensions", Ns);
             w.WriteAttributeString("name", name);
             foreach (var v in versions)
-            {
-                w.WriteStartElement("version", Ns);
-                w.WriteAttributeString("value", v.ToString(CultureInfo.InvariantCulture));
-                w.WriteEndElement();
-            }
+                w.WriteElementString("versions", Ns, v.ToString(CultureInfo.InvariantCulture));
             w.WriteEndElement();
         }
-        w.WriteEndElement();
     });
 
     // ── Music Folders ────────────────────────────────────────────────────────
@@ -344,9 +340,9 @@ public static class XmlBuilder
         foreach (var (name, songCount, albumCount) in genres)
         {
             w.WriteStartElement("genre", Ns);
-            w.WriteAttributeString("value", name);
             w.WriteAttributeString("songCount", songCount.ToString(CultureInfo.InvariantCulture));
             w.WriteAttributeString("albumCount", albumCount.ToString(CultureInfo.InvariantCulture));
+            w.WriteString(name);  // the JSON's "value": the element's text
             w.WriteEndElement();
         }
         w.WriteEndElement();
@@ -430,12 +426,7 @@ public static class XmlBuilder
     {
         var imageUrl = artistImageUrl ?? "";
         w.WriteStartElement(v2 ? "artistInfo2" : "artistInfo", Ns);
-        // Attributes first (required before any child elements per XmlWriter rules)
-        if (!string.IsNullOrEmpty(musicBrainzId)) w.WriteAttributeString("musicBrainzId", musicBrainzId);
-        w.WriteAttributeString("smallImageUrl", imageUrl);
-        w.WriteAttributeString("mediumImageUrl", imageUrl);
-        w.WriteAttributeString("largeImageUrl", imageUrl);
-        // Text element children — DSub2000's ArtistInfoParser reads these as text elements, not attributes
+        // Text element children, as Subsonic defines them — DSub2000's ArtistInfoParser reads these as text elements
         if (!string.IsNullOrEmpty(biography)) { w.WriteStartElement("biography", Ns); w.WriteString(biography); w.WriteEndElement(); }
         if (!string.IsNullOrEmpty(musicBrainzId)) { w.WriteStartElement("musicBrainzId", Ns); w.WriteString(musicBrainzId); w.WriteEndElement(); }
         { w.WriteStartElement("smallImageUrl", Ns); w.WriteString(imageUrl); w.WriteEndElement(); }
@@ -463,11 +454,12 @@ public static class XmlBuilder
         foreach (var e in entries)
         {
             w.WriteStartElement("entry", Ns);
-            WriteSongContent(w, e.Song);
+            // Before the song: its artist lists are child elements, and no attribute may follow them
             w.WriteAttributeString("username", e.Username);
             w.WriteAttributeString("minutesAgo", e.MinutesAgo.ToString(CultureInfo.InvariantCulture));
             w.WriteAttributeString("playerId", e.PlayerId.ToString(CultureInfo.InvariantCulture));
             w.WriteAttributeString("playerName", e.PlayerName);
+            WriteSongContent(w, e.Song);
             w.WriteEndElement();
         }
         w.WriteEndElement();
@@ -495,12 +487,10 @@ public static class XmlBuilder
         WriteArtistLists(w, album);
     }
 
-    // AlbumID3 shape: no isDir/title/album/parent (those are Child fields)
     private static void WriteAlbumId3Content(XmlWriter w, Dictionary<string, object?> album)
     {
-        foreach (var kv in album)
+        foreach (var kv in ItemMapper.AsAlbumId3(album))
         {
-            if (kv.Key is "isDir" or "title" or "album" or "parent") continue;
             if (kv.Value is List<Dictionary<string, object?>>) continue;
             WriteAttr(w, kv.Key, kv.Value);
         }

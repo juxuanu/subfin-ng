@@ -311,13 +311,13 @@ public static class SubsonicStore
         }
     }
 
-    public static void UpdateShare(string shareUid, string? description, string? expiresAt)
+    /// <summary>Sets when a share expires; null: never.</summary>
+    public static void UpdateShareExpiry(string shareUid, string? expiresAt)
     {
         lock (DbLock)
         {
             using var cmd = Db.CreateCommand();
-            cmd.CommandText = "UPDATE shares SET description = @desc, expires_at = @exp WHERE share_uid = @uid";
-            cmd.Parameters.AddWithValue("@desc", (object?)description ?? DBNull.Value);
+            cmd.CommandText = "UPDATE shares SET expires_at = @exp WHERE share_uid = @uid";
             cmd.Parameters.AddWithValue("@exp", (object?)expiresAt ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@uid", shareUid);
             cmd.ExecuteNonQuery();

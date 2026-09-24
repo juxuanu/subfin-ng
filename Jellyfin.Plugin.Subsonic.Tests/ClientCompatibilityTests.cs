@@ -202,17 +202,8 @@ public class ClientCompatibilityTests
         var xml = XmlBuilder.OpenSubsonicExtensions();
         var doc = Parse(xml);
         var ns = "http://subsonic.org/restapi";
-        var extensions = doc.DocumentElement!["openSubsonicExtensions", ns]!;
+        var names = doc.DocumentElement!.GetElementsByTagName("openSubsonicExtensions", ns).Cast<XmlElement>().Select(e => e.GetAttribute("name"));
 
-        var found = false;
-        foreach (XmlElement ext in extensions.ChildNodes)
-        {
-            if (ext.GetAttribute("name") == "songLyrics")
-            {
-                found = true;
-                break;
-            }
-        }
-        Assert.True(found, "openSubsonicExtensions must include an extension named 'songLyrics'");
+        Assert.Contains("songLyrics", names);
     }
 }

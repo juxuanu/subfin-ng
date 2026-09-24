@@ -2,7 +2,8 @@
 # Start a throwaway Jellyfin (podman) with a given Subfin build, configure it and create its users.
 # usage: [IMAGE=...] [BASEURL=/jellyfin] WORK=<dir> up.sh <plugin.dll> <meta.json>   -> writes $WORK/creds.env
 #   admin "tester" sees every library, "limited" only the Music library; "extra" and "lockme" are
-#   for the account-rule checks and "offline" is disabled.
+#   for the account-rule checks, "sharer" owns the shares whose owner's account changes, and
+#   "offline" is disabled.
 set -euo pipefail
 T="${WORK:?set WORK to the working directory (media/, config/, cache/)}"
 IMAGE=${IMAGE:-docker.io/jellyfin/jellyfin:12.1.20260915-010956}
@@ -73,6 +74,7 @@ new_user() {  # new_user <name> <password> [jq edit of the user's policy]
 new_user limited lpass '.EnableAllFolders=false | .EnabledFolders=[$m]'
 new_user extra xpass
 new_user lockme kpass '.LoginAttemptsBeforeLockout=3'  # Jellyfin 12: -1 (the default) never locks out
+new_user sharer hpass
 new_user offline opass '.IsDisabled=true'
 
 # optionally serve Jellyfin under a base URL (as behind a path-based reverse proxy)
@@ -90,6 +92,6 @@ curl "$URL/Plugins" -H "Authorization: $AUTH" | jq -r '.[] | select(.Name=="Subf
 # Subsonic clients sign in with the same usernames and passwords as Jellyfin
 {
   printf 'URL=%s\nHOST=%s\nBASEURL=%s\nJF_VERSION=%s\nJF_TOKEN=%s\n' "$URL" "$HOST" "$BASEURL" "$JF_VERSION" "$(sed -E 's/.*Token="([^"]+)".*/\1/' <<<"$AUTH")"
-  printf 'AU=tester\nAP=jfpass\nSU=limited\nSP=lpass\nXU=extra\nXP=xpass\nKU=lockme\nKP=kpass\nOU=offline\nOP=opass\n'
+  printf 'AU=tester\nAP=jfpass\nSU=limited\nSP=lpass\nXU=extra\nXP=xpass\nKU=lockme\nKP=kpass\nHU=sharer\nHP=hpass\nOU=offline\nOP=opass\n'
 } > "$T/creds.env"
-echo "users: tester (admin), limited (Music only), extra, lockme, offline (disabled)"
+echo "users: tester (admin), limited (Music only), extra, lockme, sharer, offline (disabled)"
