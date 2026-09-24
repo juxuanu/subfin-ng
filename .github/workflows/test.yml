@@ -27,6 +27,8 @@ jobs:
 
       - name: Test
         run: dotnet test Jellyfin.Plugin.Subsonic.Tests --nologo
+        env:
+          TZ: Europe/Madrid  # a server east of UTC: stored times read as local time show up wrong
 
   conformance:
     name: Conformance (${{ matrix.name }})

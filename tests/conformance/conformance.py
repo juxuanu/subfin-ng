@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["jsonschema>=4.23", "referencing>=0.35", "requests>=2.32"]
+# dependencies = ["jsonschema>=4.23", "referencing>=0.35", "requests>=2.32", "rfc3339-validator>=0.1.4"]
 # ///
 """OpenSubsonic conformance + behaviour checks for a Subfin-enabled Jellyfin.
 
@@ -40,7 +40,8 @@ def validator(endpoint: str) -> Draft7Validator | None:
             resp, base = json.loads(rf.read_text()), rf.parent
         ref = resp["content"]["application/json"]["schema"]["$ref"]
         uri = (base / ref).resolve().as_uri()
-        _validators[endpoint] = Draft7Validator({"$ref": uri}, registry=registry)
+        # formats too: clients parse date-time fields strictly (Navic's Instant needs ISO 8601 with a zone)
+        _validators[endpoint] = Draft7Validator({"$ref": uri}, registry=registry, format_checker=Draft7Validator.FORMAT_CHECKER)
     return _validators[endpoint]
 
 
@@ -456,6 +457,53 @@ if song_ids and "Album One" in albums:
     record("getPlayQueue round-trips entries/current/position",
            [e["id"] for e in q.get("entry", [])] == song_ids[:2] and q.get("current") == song_ids[1] and q.get("position") == 1500,
            (q.get("current"), q.get("position"), len(q.get("entry", []))))
+    record("getPlayQueue's changed is an ISO 8601 date-time, a moment ago",
+           bool(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)", q.get("changed", "")))
+           and abs(datetime.fromisoformat(q["changed"].replace("Z", "+00:00")).timestamp() - time.time()) < 120, q.get("changed"))
+
+# ── starred = a Jellyfin favourite, both ways, artists included ─────────────
+if song_ids and test_artist and "Album One" in albums:
+    aid, alid, sid = test_artist["id"], albums["Album One"]["id"], song_ids[0]
+
+    def starred_where(label):
+        """Where Test Artist, Album One and Song 1 come out starred."""
+        def artists_of(endpoint, key):
+            r = call(endpoint, check_schema=False, label=f"{label}: {endpoint}") or {}
+            return [a for i in r.get(key, {}).get("index", []) for a in i.get("artist", [])]
+        starred = lambda items: any(x.get("id") == aid and x.get("starred") for x in items)
+        found = (call("search3", {"query": "Test Artist"}, check_schema=False, label=f"{label}: search3") or {}).get("searchResult3", {})
+        st = (call("getStarred2", check_schema=False, label=f"{label}: getStarred2") or {}).get("starred2", {})
+        get = lambda endpoint, key, i: (call(endpoint, {"id": i}, check_schema=False, label=f"{label}: {endpoint}") or {}).get(key, {})
+        return {
+            "getArtists": starred(artists_of("getArtists", "artists")), "getIndexes": starred(artists_of("getIndexes", "indexes")),
+            "search3": starred(found.get("artist", [])), "getArtist": bool(get("getArtist", "artist", aid).get("starred")),
+            "getAlbum": bool(get("getAlbum", "album", alid).get("starred")), "getSong": bool(get("getSong", "song", sid).get("starred")),
+            "getStarred2": sorted(k for k, i in (("artist", aid), ("album", alid), ("song", sid)) if any(x.get("id") == i for x in st.get(k, []))),
+        }
+
+    everywhere = {k: True for k in ("getArtists", "getIndexes", "search3", "getArtist", "getAlbum", "getSong")} | {"getStarred2": ["album", "artist", "song"]}
+    nowhere = {k: False for k in everywhere} | {"getStarred2": []}
+    stars = [("artistId", aid), ("albumId", alid), ("id", sid)]
+    call("star", stars, check_schema=False, label="star all three")
+    got = starred_where("starred")
+    record("starred (an artist, an album, a song) shows in every endpoint, artists included", got == everywhere, got)
+    favourite = lambda i: (jf("GET", f"/Items/{i}", params={"userId": user_ids[SU]}).json().get("UserData") or {}).get("IsFavorite")
+    record("... and is a favourite in Jellyfin", [favourite(i) for _, i in stars] == [True] * 3, [favourite(i) for _, i in stars])
+    call("unstar", stars, check_schema=False, label="unstar all three")
+    got = starred_where("unstarred")
+    record("unstarring clears it everywhere", got == nowhere, got)
+
+    # favourites set in Jellyfin itself: the artist as Jellyfin's own artist list has it
+    jf_artist = next((a["Id"] for a in jf("GET", "/Artists/AlbumArtists", params={"searchTerm": "Test Artist", "userId": user_ids[SU]}).json()
+                      .get("Items", []) if a.get("Name") == "Test Artist"), None)
+    record("Jellyfin's album artist is the artist getArtists lists", (jf_artist or "").replace("-", "") == aid, (jf_artist, aid))
+    marked = [jf("POST", f"/UserFavoriteItems/{i}", params={"userId": user_ids[SU]}, check=False).status_code for i in (jf_artist or aid, alid, sid)]
+    got = starred_where("Jellyfin favourite")
+    record("a favourite set in Jellyfin is starred in every endpoint", marked == [200] * 3 and got == everywhere, (marked, got))
+    for i in (jf_artist or aid, alid, sid):
+        jf("DELETE", f"/UserFavoriteItems/{i}", params={"userId": user_ids[SU]}, check=False)
+    got = starred_where("Jellyfin favourite removed")
+    record("... and removing it in Jellyfin unstars it", got == nowhere, got)
 
 # ── share links must only reach the shared items ────────────────────────────
 if song_ids:

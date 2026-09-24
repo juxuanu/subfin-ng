@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
@@ -374,7 +375,14 @@ public static class SubsonicStore
 
     // ── Derived Cache ────────────────────────────────────────────────────────
 
-    public record DerivedCacheEntry(string CacheKey, string ValueJson, string CachedAt, string? LastSourceChangeAt);
+    public record DerivedCacheEntry(string CacheKey, string ValueJson, string CachedAt, string? LastSourceChangeAt)
+    {
+        /// <summary>
+        /// When it was stored. SQLite's datetime('now') is UTC without saying so; read as local time,
+        /// every entry looked hours old on servers east of UTC and was rebuilt on every request.
+        /// </summary>
+        public DateTimeOffset CachedAtUtc => DateTimeOffset.Parse(CachedAt, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal);
+    }
 
     // ── Starred timestamps ───────────────────────────────────────────────────
 

@@ -10,7 +10,8 @@ CI (`.github/workflows/test.yml`) runs it twice on every push, pull request and
 release: served at `/`, and under `/jellyfin` with `--ui`.
 
 - **Schemas** – every JSON response, errors included, is validated against the
-  OpenSubsonic OpenAPI schemas (`openapi/` of the spec repository, pinned in `run.sh`).
+  OpenSubsonic OpenAPI schemas (`openapi/` of the spec repository, pinned in `run.sh`),
+  formats included: clients parse date-time fields strictly.
 - **XML** – the XML of every read-only endpoint must carry what its JSON does, read
   the way Subsonic's JSON is derived from its XML (attributes and child elements
   become keys, repeated elements arrays, element text `value`). The XML is built
@@ -21,6 +22,10 @@ release: served at `/`, and under `/jellyfin` with `--ui`.
   files, synced (LRC) and plain lyrics files, and a movie library whose genre must
   not leak into music endpoints. Transcoded streams are measured with `ffprobe`
   (the bitrate asked for, `timeOffset`).
+- **Starred = Jellyfin favourite** – starring an artist, album or song shows in every
+  endpoint that lists it (artists too: `getArtists`, `getIndexes`, `search3`, `getArtist`)
+  and makes it a Jellyfin favourite; a favourite set in Jellyfin is starred in all of
+  them, and removing it on either side unstars it.
 - **Access control** – `up.sh` creates an admin and a user limited to one of two
   music libraries. The suite checks that the limited user can't reach the other
   library by id, and can't read or change other users' private playlists and shares.

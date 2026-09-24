@@ -259,8 +259,8 @@ public class SubsonicController(
     private IActionResult GetArtists(AuthResult auth, User user, QueryParams p, string format)
     {
         var index = BuildArtistIndex(auth, user, p.MusicFolderId);
-        var json = SubsonicEnvelope.Ok(new() { ["artists"] = BuildArtistsJson(index) });
-        return Respond(format, json, () => XmlBuilder.Artists(index));
+        var json = SubsonicEnvelope.Ok(new() { ["artists"] = BuildArtistsJson(index, ArtistStarred) });
+        return Respond(format, json, () => XmlBuilder.Artists(index, starredOf: ArtistStarred));
     }
 
     private IActionResult GetIndexes(AuthResult auth, User user, QueryParams p, string format)
@@ -268,10 +268,10 @@ public class SubsonicController(
         var index = BuildArtistIndex(auth, user, p.MusicFolderId);
         // Required by the spec. ifModifiedSince isn't supported, so the index is always current.
         var lastModified = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var indexes = BuildArtistsJson(index);
+        var indexes = BuildArtistsJson(index, ArtistStarred);
         indexes["lastModified"] = lastModified;
         var json = SubsonicEnvelope.Ok(new() { ["indexes"] = indexes });
-        return Respond(format, json, () => XmlBuilder.Indexes(index, lastModified: lastModified));
+        return Respond(format, json, () => XmlBuilder.Indexes(index, lastModified: lastModified, starredOf: ArtistStarred));
     }
 
     private List<(string Letter, List<(string Id, string Name, int AlbumCount)> Artists)> BuildArtistIndex(
@@ -309,21 +309,29 @@ public class SubsonicController(
         return grouped.Select(kv => (kv.Key, kv.Value)).ToList();
     }
 
-    private static Dictionary<string, object> BuildArtistsJson(List<(string Letter, List<(string Id, string Name, int AlbumCount)> Artists)> index) => new()
+    /// <param name="starredOf">When the user starred an artist, by id; null if they didn't. Not cached with the index.</param>
+    private static Dictionary<string, object> BuildArtistsJson(List<(string Letter, List<(string Id, string Name, int AlbumCount)> Artists)> index,
+        Func<string, string?> starredOf) => new()
     {
         ["ignoredArticles"] = "The An A Die Das Ein Eine Les Le La",
         ["index"] = index.Select(g => new Dictionary<string, object>
         {
             ["name"] = g.Letter,
-            ["artist"] = g.Artists.Select(a => new Dictionary<string, object>
-            {
-                ["id"] = a.Id,
-                ["name"] = a.Name,
-                ["coverArt"] = $"ar-{a.Id}",
-                ["albumCount"] = a.AlbumCount,
-            }).ToList(),
+            ["artist"] = g.Artists.Select(a => ItemMapper.ToIndexArtist(a.Id, a.Name, a.AlbumCount, starredOf(a.Id))).ToList(),
         }).ToList(),
     };
+
+    // Per-request: the current user's favourite artists (Jellyfin favourites = starred), by id
+    private Dictionary<string, string>? _starredArtists;
+
+    /// <summary>When the current user starred an artist, by its id; null if they didn't.</summary>
+    private string? ArtistStarred(string artistId)
+    {
+        _starredArtists ??= _currentUser == null ? new() : library.GetItemList(new InternalItemsQuery(_currentUser)
+            { IncludeItemTypes = [BaseItemKind.MusicArtist], IsFavorite = true, Recursive = true })
+            .ToDictionary(a => a.Id.ToString("N"), a => StarredAt(a) ?? a.DateCreated.ToString("o"));
+        return _starredArtists.GetValueOrDefault(artistId);
+    }
 
     // ── getArtist ────────────────────────────────────────────────────────────
 
@@ -339,7 +347,8 @@ public class SubsonicController(
         logger.LogInformation("[Subfin] getArtist {Name} (guid={Guid}): {Count} albums", artist.Name, guid, albums.Count);
 
         var artistId = artist.Id.ToString("N");
-        var mapped = ItemMapper.ToArtistWithAlbums(artist, albums, a => ItemMapper.AsAlbumId3(ItemMapper.ToAlbumShort(a, artistId, UserDataFor(a), StarredAt(a), ArtistIdOf)));
+        var mapped = ItemMapper.ToArtistWithAlbums(artist, albums, a => ItemMapper.AsAlbumId3(ItemMapper.ToAlbumShort(a, artistId, UserDataFor(a), StarredAt(a), ArtistIdOf)),
+            ArtistStarred(artistId));
         var json = SubsonicEnvelope.Ok(new() { ["artist"] = mapped });
         return Respond(format, json, () => XmlBuilder.Artist(mapped));
     }
@@ -480,7 +489,7 @@ public class SubsonicController(
             .Where(a => a.Name.Contains(lowerQuery, StringComparison.OrdinalIgnoreCase))
             .Skip(artistOffset)
             .Take(artistCount)
-            .Select(a => new Dictionary<string, object?> { ["id"] = a.Id, ["name"] = a.Name, ["coverArt"] = $"ar-{a.Id}", ["albumCount"] = a.AlbumCount })
+            .Select(a => ItemMapper.ToIndexArtist(a.Id, a.Name, a.AlbumCount, ArtistStarred(a.Id)))
             .ToList();
 
         var albums = library.GetItemList(new InternalItemsQuery(user)
@@ -1114,6 +1123,7 @@ public class SubsonicController(
             return audio != null ? ToSongWithArtist(audio) : null;
         }).Where(s => s != null).Cast<Dictionary<string, object?>>().ToList();
 
+        var changed = pq.ChangedAt != null ? ToIsoDateTime(pq.ChangedAt) : DateTimeOffset.UnixEpoch.ToString("o");
         var json = SubsonicEnvelope.Ok(new()
         {
             ["playQueue"] = new Dictionary<string, object>
@@ -1121,12 +1131,12 @@ public class SubsonicController(
                 ["current"] = pq.CurrentId ?? "",
                 ["position"] = pq.PositionMs,
                 ["username"] = user.Username,
-                ["changed"] = pq.ChangedAt ?? DateTimeOffset.UnixEpoch.ToString("o"),
+                ["changed"] = changed,
                 ["changedBy"] = pq.ChangedBy,
                 ["entry"] = songs,
             },
         });
-        return Respond(format, json, () => XmlBuilder.PlayQueue(pq.CurrentId, pq.CurrentIndex, pq.PositionMs, pq.ChangedAt, pq.ChangedBy, songs, user.Username));
+        return Respond(format, json, () => XmlBuilder.PlayQueue(pq.CurrentId, pq.CurrentIndex, pq.PositionMs, changed, pq.ChangedBy, songs, user.Username));
     }
 
     // ── Shares ───────────────────────────────────────────────────────────────
@@ -1200,7 +1210,7 @@ public class SubsonicController(
             DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
         var created = createdDt.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
         var expires = s.ExpiresAt != null
-            ? ToShareDateTime(s.ExpiresAt)
+            ? ToIsoDateTime(s.ExpiresAt)
             : createdDt.AddYears(1).ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
         var songs = s.EntryIdsFlat.Select(id =>
         {
@@ -1212,7 +1222,11 @@ public class SubsonicController(
         return new ShareXml(s.ShareUid, url, s.Description, user.Username, created, expires, s.VisitCount, songs);
     }
 
-    private static string ToShareDateTime(string sqliteOrIsoDateTime) =>
+    /// <summary>
+    /// A stored time as an ISO 8601 date-time in UTC, as clients parse them. SQLite's datetime('now')
+    /// ("2026-09-24 16:30:00") is UTC without saying so.
+    /// </summary>
+    internal static string ToIsoDateTime(string sqliteOrIsoDateTime) =>
         DateTime.Parse(sqliteOrIsoDateTime, CultureInfo.InvariantCulture,
             DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal)
             .ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
@@ -1575,7 +1589,7 @@ public class SubsonicController(
         var cached = SubsonicStore.GetDerivedCache(cacheKey);
         if (cached != null)
         {
-            var ageDays = (DateTimeOffset.UtcNow - DateTimeOffset.Parse(cached.CachedAt)).TotalDays;
+            var ageDays = (DateTimeOffset.UtcNow - cached.CachedAtUtc).TotalDays;
             if (ageDays < cacheDays)
                 return cached.ValueJson;
         }
@@ -1812,7 +1826,7 @@ public class SubsonicController(
         var cached = SubsonicStore.GetDerivedCache(cacheKey);
         if (cached != null)
         {
-            var ageMs = (DateTimeOffset.UtcNow - DateTimeOffset.Parse(cached.CachedAt)).TotalMilliseconds;
+            var ageMs = (DateTimeOffset.UtcNow - cached.CachedAtUtc).TotalMilliseconds;
             var value = deserialize(cached.ValueJson);
             if (value != null)
             {

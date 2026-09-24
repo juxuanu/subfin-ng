@@ -62,17 +62,30 @@ public static class ItemMapper
     };
 
     /// <param name="mapAlbum">Maps each album (with the caller's per-user data).</param>
-    public static Dictionary<string, object?> ToArtistWithAlbums(MusicArtist artist, IEnumerable<MusicAlbum> albums, Func<MusicAlbum, Dictionary<string, object?>> mapAlbum)
+    /// <param name="starred">When the user starred the artist (a Jellyfin favourite); null if they didn't.</param>
+    public static Dictionary<string, object?> ToArtistWithAlbums(MusicArtist artist, IEnumerable<MusicAlbum> albums, Func<MusicAlbum, Dictionary<string, object?>> mapAlbum,
+        string? starred = null)
     {
         var albumList = albums.ToList();
-        return new()
+        var result = new Dictionary<string, object?>
         {
             ["id"] = artist.Id.ToString("N"),
             ["name"] = artist.Name ?? "",
             ["coverArt"] = $"ar-{artist.Id:N}",
             ["albumCount"] = albumList.Count,
-            ["album"] = albumList.Select(mapAlbum).ToList(),
         };
+        if (starred != null) result["starred"] = starred;
+        result["album"] = albumList.Select(mapAlbum).ToList();
+        return result;
+    }
+
+    /// <summary>An artist of the artist index (getArtists, getIndexes, search3).</summary>
+    /// <param name="starred">When the user starred the artist (a Jellyfin favourite); null if they didn't.</param>
+    public static Dictionary<string, object?> ToIndexArtist(string id, string name, int albumCount, string? starred)
+    {
+        var result = new Dictionary<string, object?> { ["id"] = id, ["name"] = name, ["coverArt"] = $"ar-{id}", ["albumCount"] = albumCount };
+        if (starred != null) result["starred"] = starred;
+        return result;
     }
 
     // ── Album ────────────────────────────────────────────────────────────────

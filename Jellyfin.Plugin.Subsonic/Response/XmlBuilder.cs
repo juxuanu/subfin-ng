@@ -161,34 +161,29 @@ public static class XmlBuilder
 
     // ── Artists / Indexes ────────────────────────────────────────────────────
 
-    public static string Artists(List<(string Letter, List<(string Id, string Name, int AlbumCount)> Artists)> index, string ignoredArticles = "The An A Die Das Ein Eine Les Le La") => OkEnvelope(w =>
+    /// <param name="starredOf">When the user starred an artist, by id; null if they didn't.</param>
+    public static string Artists(List<(string Letter, List<(string Id, string Name, int AlbumCount)> Artists)> index, string ignoredArticles = "The An A Die Das Ein Eine Les Le La",
+        Func<string, string?>? starredOf = null) => OkEnvelope(w =>
     {
         w.WriteStartElement("artists", Ns);
         w.WriteAttributeString("ignoredArticles", ignoredArticles);
-        foreach (var (letter, artists) in index)
-        {
-            w.WriteStartElement("index", Ns);
-            w.WriteAttributeString("name", letter);
-            foreach (var (id, name, albumCount) in artists)
-            {
-                w.WriteStartElement("artist", Ns);
-                w.WriteAttributeString("id", id);
-                w.WriteAttributeString("name", name);
-                w.WriteAttributeString("coverArt", $"ar-{id}");
-                w.WriteAttributeString("albumCount", albumCount.ToString(CultureInfo.InvariantCulture));
-                w.WriteEndElement();
-            }
-            w.WriteEndElement();
-        }
+        WriteIndex(w, index, starredOf);
         w.WriteEndElement();
     });
 
     // Same structure as Artists but uses <indexes> root
-    public static string Indexes(List<(string Letter, List<(string Id, string Name, int AlbumCount)> Artists)> index, string ignoredArticles = "The An A Die Das Ein Eine Les Le La", long lastModified = 0) => OkEnvelope(w =>
+    public static string Indexes(List<(string Letter, List<(string Id, string Name, int AlbumCount)> Artists)> index, string ignoredArticles = "The An A Die Das Ein Eine Les Le La", long lastModified = 0,
+        Func<string, string?>? starredOf = null) => OkEnvelope(w =>
     {
         w.WriteStartElement("indexes", Ns);
         w.WriteAttributeString("lastModified", lastModified.ToString(CultureInfo.InvariantCulture));
         w.WriteAttributeString("ignoredArticles", ignoredArticles);
+        WriteIndex(w, index, starredOf);
+        w.WriteEndElement();
+    });
+
+    private static void WriteIndex(XmlWriter w, List<(string Letter, List<(string Id, string Name, int AlbumCount)> Artists)> index, Func<string, string?>? starredOf)
+    {
         foreach (var (letter, artists) in index)
         {
             w.WriteStartElement("index", Ns);
@@ -196,16 +191,12 @@ public static class XmlBuilder
             foreach (var (id, name, albumCount) in artists)
             {
                 w.WriteStartElement("artist", Ns);
-                w.WriteAttributeString("id", id);
-                w.WriteAttributeString("name", name);
-                w.WriteAttributeString("coverArt", $"ar-{id}");
-                w.WriteAttributeString("albumCount", albumCount.ToString(CultureInfo.InvariantCulture));
+                foreach (var kv in ItemMapper.ToIndexArtist(id, name, albumCount, starredOf?.Invoke(id))) WriteAttr(w, kv.Key, kv.Value);
                 w.WriteEndElement();
             }
             w.WriteEndElement();
         }
-        w.WriteEndElement();
-    });
+    }
 
     // ── Artist with albums ───────────────────────────────────────────────────
 
