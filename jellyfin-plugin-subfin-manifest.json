@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/juxuanu/subfin-plugin/main/logo.png",
     "versions": [
       {
+        "version": "12.1.8.8",
+        "changelog": "- perf: album and song lists look up what they need per list, not per item\n- perf: drop the cache, look up artists in one query, add performance budgets",
+        "targetAbi": "12.1.0.0",
+        "sourceUrl": "https://github.com/juxuanu/subfin-plugin/releases/download/v12.1.8.8/jellyfin-plugin-subfin_12.1.8.8.zip",
+        "checksum": "ccd055a3e90d6f4c843f0b3df1a36da1",
+        "timestamp": "2026-09-24T18:10:02Z"
+      },
+      {
         "version": "12.1.8.7",
         "changelog": "- fix: starred artists, the play queue's date and cache times\n- address CI warnings",
         "targetAbi": "12.1.0.0",
