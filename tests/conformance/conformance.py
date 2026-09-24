@@ -212,6 +212,32 @@ if "Album One" in albums:
            bool(one_songs) and all(x.get("artistId") == album_artist_ids["Album One"] for x in one_songs), [x.get("artistId") for x in one_songs])
     r = call("getArtist", {"id": album_artist_ids["Album One"]}, check_schema=False, label="artist from an album")
     record("getArtist opens the artist by an album's artistId", ok(r) and r.get("artist", {}).get("name") == "Test Artist", r)
+
+# OpenSubsonic artist lists ({id, name} per artist): what clients show under each song
+if "Compilation" in albums:
+    comp_album = call("getAlbum", {"id": albums["Compilation"]["id"]}, check_schema=False, label="artist lists").get("album", {})
+    va = album_artist_ids["Compilation"]
+    record("an album lists its artists, linked to getArtists",
+           comp_album.get("artists") == [{"id": va, "name": "Various Artists"}] and comp_album.get("displayArtist") == "Various Artists",
+           (comp_album.get("artists"), comp_album.get("displayArtist")))
+    comp_tracks = comp_album.get("song", [])
+    record("each song lists its own artists",
+           sorted(tuple(a["name"] for a in x.get("artists", [])) for x in comp_tracks) == [("Artist A",), ("Artist B",)]
+           and all(a.get("id") for x in comp_tracks for a in x.get("artists", [])),
+           [x.get("artists") for x in comp_tracks])
+    record("each song lists its album artists, linked to getArtists",
+           all(x.get("albumArtists") == [{"id": va, "name": "Various Artists"}] for x in comp_tracks), [x.get("albumArtists") for x in comp_tracks])
+    listed = call("getAlbumList2", {"type": "alphabeticalByName", "size": 50}, check_schema=False, label="album list artists").get("albumList2", {}).get("album", [])
+    record("album lists carry each album's artists", all(x.get("artists") and all(a["id"] in artist_ids for a in x["artists"]) for x in listed),
+           [(x.get("name"), x.get("artists")) for x in listed])
+    x = requests.get(f"{API}/getAlbum", params={**auth(f="xml"), "id": albums["Compilation"]["id"]}, timeout=30)
+    try:
+        el = ET.fromstring(x.content).find("{http://subsonic.org/restapi}album")
+        got = ([a.get("name") for a in el.findall("{http://subsonic.org/restapi}artists")],
+               sorted(a.get("name") for sg in el.findall("{http://subsonic.org/restapi}song") for a in sg.findall("{http://subsonic.org/restapi}artists")))
+    except (ET.ParseError, AttributeError) as e:
+        got = repr(e)
+    record("XML carries the artist lists as child elements", got == (["Various Artists"], ["Artist A", "Artist B"]), got)
 for t, extra in [("newest", {}), ("alphabeticalByArtist", {}), ("random", {}), ("highest", {}), ("frequent", {}),
                  ("recent", {}), ("starred", {}), ("byYear", {"fromYear": 2000, "toYear": 2006}), ("byGenre", {"genre": "Jazz"})]:
     r = call("getAlbumList2", {"type": t, **extra}, label=f"getAlbumList2 type={t}")

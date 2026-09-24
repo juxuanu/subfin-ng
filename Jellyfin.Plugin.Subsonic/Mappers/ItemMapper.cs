@@ -81,7 +81,9 @@ public static class ItemMapper
 
     // ── Album ────────────────────────────────────────────────────────────────
 
-    public static Dictionary<string, object?> ToAlbumShort(MusicAlbum album, string? resolvedArtistId = null, UserItemData? userData = null, string? starredAt = null)
+    /// <param name="artistIdOf">Artist name to id, for the OpenSubsonic artists list; without it the list is left out.</param>
+    public static Dictionary<string, object?> ToAlbumShort(MusicAlbum album, string? resolvedArtistId = null, UserItemData? userData = null, string? starredAt = null,
+        Func<string, string?>? artistIdOf = null)
     {
         var artistName = album.AlbumArtist ?? album.AlbumArtists.FirstOrDefault() ?? "";
         var result = new Dictionary<string, object?>
@@ -104,12 +106,15 @@ public static class ItemMapper
             ["genre"] = album.Genres.FirstOrDefault() ?? "",
             ["created"] = (album.DateCreated == default ? DateTimeOffset.UnixEpoch.UtcDateTime : album.DateCreated).ToString("o"),
         };
+        AddAlbumArtists(result, album, artistName, artistIdOf);
         AddUserData(result, album, userData, starredAt);
         return result;
     }
 
     /// <param name="mapSong">Maps each track; songs carry their own track artists, not the album artist.</param>
-    public static Dictionary<string, object?> ToAlbum(MusicAlbum album, IEnumerable<Audio> songs, Func<Audio, Dictionary<string, object?>> mapSong, string? resolvedArtistId = null, UserItemData? userData = null, string? starredAt = null)
+    /// <param name="artistIdOf">Artist name to id, for the OpenSubsonic artists list; without it the list is left out.</param>
+    public static Dictionary<string, object?> ToAlbum(MusicAlbum album, IEnumerable<Audio> songs, Func<Audio, Dictionary<string, object?>> mapSong, string? resolvedArtistId = null, UserItemData? userData = null, string? starredAt = null,
+        Func<string, string?>? artistIdOf = null)
     {
         var songList = songs.ToList();
         var artistName = album.AlbumArtist ?? album.AlbumArtists.FirstOrDefault() ?? "";
@@ -132,15 +137,37 @@ public static class ItemMapper
             ["genre"] = album.Genres.FirstOrDefault() ?? "",
             ["song"] = songList.Select(mapSong).ToList(),
         };
+        AddAlbumArtists(result, album, artistName, artistIdOf);
         AddUserData(result, album, userData, starredAt);
         return result;
     }
 
+    /// <summary>OpenSubsonic's album artist fields: every album artist, not only the first.</summary>
+    private static void AddAlbumArtists(Dictionary<string, object?> result, MusicAlbum album, string firstArtist, Func<string, string?>? artistIdOf)
+    {
+        result["displayArtist"] = album.AlbumArtists.Count > 0 ? string.Join(", ", album.AlbumArtists) : firstArtist;
+        if (artistIdOf != null)
+            result["artists"] = ArtistRefs(album.AlbumArtists.Count > 0 ? album.AlbumArtists : [firstArtist], artistIdOf);
+    }
+
+    /// <summary>
+    /// OpenSubsonic artist lists (artists, albumArtists): an {id, name} per artist, with the ids
+    /// getArtists uses. Names without an artist id are left out.
+    /// </summary>
+    public static List<Dictionary<string, object?>> ArtistRefs(IEnumerable<string> names, Func<string, string?> artistIdOf) =>
+        names.Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(n => (Name: n, Id: artistIdOf(n)))
+            .Where(a => a.Id != null)
+            .Select(a => new Dictionary<string, object?> { ["id"] = a.Id, ["name"] = a.Name })
+            .ToList();
+
     // ── Song ─────────────────────────────────────────────────────────────────
 
     /// <param name="relativePath">Path inside its library; defaults to the file name (never the server path).</param>
+    /// <param name="artistIdOf">Artist name to id, for the OpenSubsonic artists and albumArtists lists; without it they're left out.</param>
     public static Dictionary<string, object?> ToSong(Audio song, string? albumId = null, string? albumName = null, string? artistId = null,
-        UserItemData? userData = null, string? starredAt = null, string? relativePath = null)
+        UserItemData? userData = null, string? starredAt = null, string? relativePath = null, Func<string, string?>? artistIdOf = null)
     {
         var duration = TicksToSeconds(song.RunTimeTicks);
         var size = song.Size ?? 0L;
@@ -190,6 +217,11 @@ public static class ItemMapper
             ["samplingRate"] = mediaStream?.SampleRate ?? 44100,
             ["channelCount"] = mediaStream?.Channels ?? 2,
         };
+        if (artistIdOf != null)
+        {
+            result["artists"] = ArtistRefs(song.Artists.Count > 0 ? song.Artists : song.AlbumArtists, artistIdOf);
+            result["albumArtists"] = ArtistRefs(song.AlbumArtists, artistIdOf);
+        }
         AddUserData(result, song, userData, starredAt);
         return result;
     }

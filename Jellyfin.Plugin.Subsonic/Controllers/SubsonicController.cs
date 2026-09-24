@@ -251,9 +251,17 @@ public class SubsonicController : ControllerBase
     /// Artist ids are the bare GUID everywhere, as in getArtists: clients look artists up by the
     /// artistId of albums and songs among the ones getArtists returned.
     /// </summary>
-    private string? ResolveArtistTagId(string? name) =>
-        string.IsNullOrEmpty(name) ? null :
-        _library.GetArtist(name) is MusicArtist a ? a.Id.ToString("N") : null;
+    private string? ResolveArtistTagId(string? name) => string.IsNullOrEmpty(name) ? null : ArtistIdOf(name);
+
+    // Per-request: artist name → id (a song list names the same artists over and over)
+    private readonly Dictionary<string, string?> _artistIds = new(StringComparer.OrdinalIgnoreCase);
+
+    private string? ArtistIdOf(string name)
+    {
+        if (!_artistIds.TryGetValue(name, out var id))
+            _artistIds[name] = id = _library.GetArtist(name) is MusicArtist a ? a.Id.ToString("N") : null;
+        return id;
+    }
 
     // ── Response helper ──────────────────────────────────────────────────────
 
@@ -375,7 +383,7 @@ public class SubsonicController : ControllerBase
         _logger.LogInformation("[Subfin] getArtist {Name} (guid={Guid}): {Count} albums", artist.Name, guid, albums.Count);
 
         var artistId = artist.Id.ToString("N");
-        var mapped = ItemMapper.ToArtistWithAlbums(artist, albums, a => ItemMapper.ToAlbumShort(a, artistId, UserDataFor(a), StarredAt(a)));
+        var mapped = ItemMapper.ToArtistWithAlbums(artist, albums, a => ItemMapper.ToAlbumShort(a, artistId, UserDataFor(a), StarredAt(a), ArtistIdOf));
         var json = SubsonicEnvelope.Ok(new() { ["artist"] = mapped });
         return Respond(format, json, () => XmlBuilder.Artist(mapped));
     }
@@ -393,7 +401,7 @@ public class SubsonicController : ControllerBase
         var songs = AlbumTracks(user, guid);
 
         var resolvedArtistId = ResolveArtistTagId(album.AlbumArtist ?? album.AlbumArtists.FirstOrDefault());
-        var mapped = ItemMapper.ToAlbum(album, songs, s => ToAlbumSong(s, album), resolvedArtistId, UserDataFor(album));
+        var mapped = ItemMapper.ToAlbum(album, songs, s => ToAlbumSong(s, album), resolvedArtistId, UserDataFor(album), artistIdOf: ArtistIdOf);
         var json = SubsonicEnvelope.Ok(new() { ["album"] = mapped });
         return Respond(format, json, () => XmlBuilder.Album(mapped));
     }
@@ -1949,10 +1957,10 @@ public class SubsonicController : ControllerBase
     private Dictionary<string, object?> ToAlbumSong(Audio s, MusicAlbum? album) =>
         ItemMapper.ToSong(s, album?.Id.ToString("N"), album?.Name,
             artistId: ResolveArtistTagId(s.Artists.FirstOrDefault() ?? s.AlbumArtists.FirstOrDefault()),
-            userData: UserDataFor(s), starredAt: StarredAt(s), relativePath: RelativePath(s.Path));
+            userData: UserDataFor(s), starredAt: StarredAt(s), relativePath: RelativePath(s.Path), artistIdOf: ArtistIdOf);
 
     private Dictionary<string, object?> ToAlbumWithArtist(MusicAlbum a) =>
-        ItemMapper.ToAlbumShort(a, ResolveArtistTagId(a.AlbumArtist ?? a.AlbumArtists.FirstOrDefault()), UserDataFor(a), StarredAt(a));
+        ItemMapper.ToAlbumShort(a, ResolveArtistTagId(a.AlbumArtist ?? a.AlbumArtists.FirstOrDefault()), UserDataFor(a), StarredAt(a), ArtistIdOf);
 
     // Per-request: when the current user starred items through Subfin.
     private Dictionary<string, string>? _starredDates;

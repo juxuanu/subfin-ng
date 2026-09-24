@@ -111,23 +111,26 @@ public static class LibraryQueries
 
         var allAlbums = library.GetItemList(albumQuery).OfType<MusicAlbum>();
 
+        // Every album artist, not only the first: songs and albums list them all (OpenSubsonic
+        // "artists"), and clients open those artists from the getArtists list.
         var byKey = new Dictionary<string, (string Id, string Name, int Count)>(StringComparer.OrdinalIgnoreCase);
         foreach (var album in allAlbums)
         {
-            var artistName = album.AlbumArtist ?? album.AlbumArtists.FirstOrDefault() ?? "";
-            if (string.IsNullOrEmpty(artistName)) continue;
-
-            var key = CanonicalArtistKey(artistName);
-            if (byKey.TryGetValue(key, out var existing))
+            var names = album.AlbumArtists.Count > 0 ? album.AlbumArtists : album.AlbumArtist is { Length: > 0 } one ? [one] : [];
+            foreach (var key in names.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => (Name: n, Key: CanonicalArtistKey(n)))
+                         .DistinctBy(n => n.Key))
             {
-                byKey[key] = existing with { Count = existing.Count + 1 };
-                continue;
+                if (byKey.TryGetValue(key.Key, out var existing))
+                {
+                    byKey[key.Key] = existing with { Count = existing.Count + 1 };
+                    continue;
+                }
+
+                var artistEntity = library.GetArtist(key.Name);
+                if (artistEntity == null) continue;
+
+                byKey[key.Key] = (artistEntity.Id.ToString("N"), key.Name, 1);
             }
-
-            var artistEntity = library.GetArtist(artistName);
-            if (artistEntity == null) continue;
-
-            byKey[key] = (artistEntity.Id.ToString("N"), artistName, 1);
         }
         return byKey.Values.Select(v => (v.Id, v.Name, v.Count)).OrderBy(v => v.Name).ToList();
     }
