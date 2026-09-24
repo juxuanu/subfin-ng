@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/juxuanu/subfin-plugin/main/logo.png",
     "versions": [
       {
+        "version": "12.1.8.4",
+        "changelog": "- release: bump to v12.1.8.4\n- ci: run the unit tests and conformance suite on pushes, PRs and releases\n- big cleanup, hopefully no behavior changes\n- release: add v12.1.8.3 to the plugin manifest [skip ci]",
+        "targetAbi": "12.1.0.0",
+        "sourceUrl": "https://github.com/juxuanu/subfin-plugin/releases/download/v12.1.8.4/jellyfin-plugin-subfin_12.1.8.4.zip",
+        "checksum": "de74df9d5d60ed74ad8aa3af04000e83",
+        "timestamp": "2026-09-24T12:52:23Z"
+      },
+      {
         "version": "12.1.8.3",
         "changelog": "- release: bump to v12.1.8.3\n- release: bump to v12.1.8.2",
         "targetAbi": "12.1.0.0",
