@@ -1,12 +1,6 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Reflection;
-using System.Security.Cryptography;
 using System.Text.Json;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.Data.Sqlite;
-using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.Subsonic.Store;
 
@@ -40,7 +34,7 @@ public static class SubsonicStore
 {
     private static SqliteConnection? _db;
     private static string _salt = string.Empty;
-    private static readonly object _lock = new();
+    private static readonly Lock DbLock = new();
 
     public static void Initialize(string dbPath, string salt)
     {
@@ -162,7 +156,7 @@ public static class SubsonicStore
     /// <summary>The user's OpenSubsonic password, or null if none was generated.</summary>
     public static string? GetSubsonicPassword(string userId)
     {
-        lock (_lock)
+        lock (DbLock)
         {
             using var cmd = Db.CreateCommand();
             cmd.CommandText = "SELECT password_encrypted FROM subsonic_passwords WHERE user_id = @u";
@@ -176,7 +170,7 @@ public static class SubsonicStore
     /// <summary>When each user's OpenSubsonic password was generated (UTC, SQLite format), by user id.</summary>
     public static Dictionary<string, string> GetSubsonicPasswordDates()
     {
-        lock (_lock)
+        lock (DbLock)
         {
             using var cmd = Db.CreateCommand();
             cmd.CommandText = "SELECT user_id, created_at FROM subsonic_passwords";
@@ -190,7 +184,7 @@ public static class SubsonicStore
     public static void SetSubsonicPassword(string userId, string password)
     {
         var encrypted = Crypto.Encrypt(password, _salt);
-        lock (_lock)
+        lock (DbLock)
         {
             using var cmd = Db.CreateCommand();
             cmd.CommandText = @"
@@ -204,7 +198,7 @@ public static class SubsonicStore
 
     public static void DeleteSubsonicPassword(string userId)
     {
-        lock (_lock)
+        lock (DbLock)
         {
             using var cmd = Db.CreateCommand();
             cmd.CommandText = "DELETE FROM subsonic_passwords WHERE user_id = @u";
@@ -217,7 +211,7 @@ public static class SubsonicStore
 
     public static PlayQueueRecord? GetPlayQueue(string userId)
     {
-        lock (_lock)
+        lock (DbLock)
         {
             using var cmd = Db.CreateCommand();
             cmd.CommandText = "SELECT * FROM play_queue WHERE user_id = @u";
@@ -237,7 +231,7 @@ public static class SubsonicStore
 
     public static void SavePlayQueue(string userId, List<string> entryIds, string? currentId, int currentIndex, long positionMs, string changedBy)
     {
-        lock (_lock)
+        lock (DbLock)
         {
             using var cmd = Db.CreateCommand();
             cmd.CommandText = @"
@@ -258,7 +252,7 @@ public static class SubsonicStore
 
     public static void ClearPlayQueue(string userId)
     {
-        lock (_lock)
+        lock (DbLock)
         {
             using var cmd = Db.CreateCommand();
             cmd.CommandText = "DELETE FROM play_queue WHERE user_id = @u";
@@ -271,7 +265,7 @@ public static class SubsonicStore
 
     public static ShareRecord? GetShare(string shareUid)
     {
-        lock (_lock)
+        lock (DbLock)
         {
             using var cmd = Db.CreateCommand();
             cmd.CommandText = "SELECT * FROM shares WHERE share_uid = @uid";
@@ -283,7 +277,7 @@ public static class SubsonicStore
 
     public static List<ShareRecord> GetSharesForUser(string ownerUserId)
     {
-        lock (_lock)
+        lock (DbLock)
         {
             var list = new List<ShareRecord>();
             using var cmd = Db.CreateCommand();
@@ -299,7 +293,7 @@ public static class SubsonicStore
     {
         var uid = Guid.NewGuid().ToString("N");
         var secretEncrypted = Crypto.Encrypt(secret, _salt);
-        lock (_lock)
+        lock (DbLock)
         {
             using var cmd = Db.CreateCommand();
             cmd.CommandText = @"
@@ -319,7 +313,7 @@ public static class SubsonicStore
 
     public static void UpdateShare(string shareUid, string? description, string? expiresAt)
     {
-        lock (_lock)
+        lock (DbLock)
         {
             using var cmd = Db.CreateCommand();
             cmd.CommandText = "UPDATE shares SET description = @desc, expires_at = @exp WHERE share_uid = @uid";
@@ -332,7 +326,7 @@ public static class SubsonicStore
 
     public static void UpdateShareDescription(string shareUid, string? description)
     {
-        lock (_lock)
+        lock (DbLock)
         {
             using var cmd = Db.CreateCommand();
             cmd.CommandText = "UPDATE shares SET description = @desc WHERE share_uid = @uid";
@@ -344,7 +338,7 @@ public static class SubsonicStore
 
     public static void DeleteShare(string shareUid)
     {
-        lock (_lock)
+        lock (DbLock)
         {
             using var cmd = Db.CreateCommand();
             cmd.CommandText = "DELETE FROM shares WHERE share_uid = @uid";
@@ -355,7 +349,7 @@ public static class SubsonicStore
 
     public static void IncrementShareVisitCount(string shareUid)
     {
-        lock (_lock)
+        lock (DbLock)
         {
             using var cmd = Db.CreateCommand();
             cmd.CommandText = "UPDATE shares SET visit_count = visit_count + 1 WHERE share_uid = @uid";
@@ -366,7 +360,7 @@ public static class SubsonicStore
 
     public static string? GetShareSecret(string shareUid)
     {
-        lock (_lock)
+        lock (DbLock)
         {
             using var cmd = Db.CreateCommand();
             cmd.CommandText = "SELECT share_secret_encrypted FROM shares WHERE share_uid = @uid";
@@ -387,7 +381,7 @@ public static class SubsonicStore
     /// <summary>Records (keeping the first date) or forgets when a user starred an item.</summary>
     public static void SetStarred(string jellyfinUserId, string itemId, bool starred)
     {
-        lock (_lock)
+        lock (DbLock)
         {
             using var cmd = Db.CreateCommand();
             cmd.CommandText = starred
@@ -403,7 +397,7 @@ public static class SubsonicStore
     /// <summary>item id (N format) → ISO date the user starred it.</summary>
     public static Dictionary<string, string> GetStarredDates(string jellyfinUserId)
     {
-        lock (_lock)
+        lock (DbLock)
         {
             var result = new Dictionary<string, string>();
             using var cmd = Db.CreateCommand();
@@ -417,7 +411,7 @@ public static class SubsonicStore
 
     public static DerivedCacheEntry? GetDerivedCache(string cacheKey)
     {
-        lock (_lock)
+        lock (DbLock)
         {
             using var cmd = Db.CreateCommand();
             cmd.CommandText = "SELECT * FROM derived_cache WHERE cache_key = @k";
@@ -434,7 +428,7 @@ public static class SubsonicStore
 
     public static void SetDerivedCache(string cacheKey, string valueJson, string? lastSourceChangeAt)
     {
-        lock (_lock)
+        lock (DbLock)
         {
             using var cmd = Db.CreateCommand();
             cmd.CommandText = @"

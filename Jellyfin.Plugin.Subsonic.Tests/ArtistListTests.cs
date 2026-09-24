@@ -1,6 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Xml;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.Subsonic.Mappers;
@@ -91,6 +88,6 @@ public class ArtistListTests
 
         Assert.Equal("2026-09-23T00:00:00Z", el.GetAttribute("played"));
         Assert.Equal(["artists", "artists", "song"], el.ChildNodes.Cast<XmlElement>().Select(c => c.LocalName));
-        Assert.Equal("A", ((XmlElement)el["song", Ns]!["artists", Ns]!).GetAttribute("name"));
+        Assert.Equal("A", el["song", Ns]!["artists", Ns]!.GetAttribute("name"));
     }
 }

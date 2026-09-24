@@ -1,10 +1,5 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Net;
 using System.Security.Cryptography;
-using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.Subsonic.Auth;
 using Jellyfin.Plugin.Subsonic.Store;
@@ -277,7 +272,7 @@ public sealed class SubsonicAuthTests : IDisposable
         var result = Assert.IsType<AuthResult>(await Resolve(("u", $"share_{uid}"), ("p", "s3cret")));
         Assert.Equal(_alice.Id, result.UserId);
         Assert.Equal(uid, result.ShareId);
-        Assert.Equal(new HashSet<string> { "song1", "song2" }, result.ShareAllowedIds);
+        Assert.Equal(["song1", "song2"], result.ShareAllowedIds);
         await JellyfinWasAsked(0);
     }
 

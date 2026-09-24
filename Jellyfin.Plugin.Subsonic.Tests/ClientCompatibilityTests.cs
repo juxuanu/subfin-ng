@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using System.Xml;
 using Jellyfin.Plugin.Subsonic.Controllers;
 using Jellyfin.Plugin.Subsonic.Response;
@@ -34,8 +32,8 @@ public class ClientCompatibilityTests
             new() { ["id"] = "s-2", ["title"] = "Track B", ["mediaType"] = "song" },
         };
         var xml = XmlBuilder.SearchResult3(
-            new List<Dictionary<string, object?>> { new() { ["id"] = "ar-1", ["name"] = "Artist" } },
-            new List<Dictionary<string, object?>> { new() { ["id"] = "al-1", ["name"] = "Album" } },
+            [new() { ["id"] = "ar-1", ["name"] = "Artist" }],
+            [new() { ["id"] = "al-1", ["name"] = "Album" }],
             songs);
 
         var doc = Parse(xml);
@@ -56,7 +54,7 @@ public class ClientCompatibilityTests
     {
         var song = new Dictionary<string, object?>
         {
-            ["id"] = "s-1", ["title"] = "Track", ["mediaType"] = "song", ["artistId"] = null
+            ["id"] = "s-1", ["title"] = "Track", ["mediaType"] = "song", ["artistId"] = null,
         };
         var xml = XmlBuilder.Song(song);
         var doc = Parse(xml);
@@ -75,7 +73,7 @@ public class ClientCompatibilityTests
     {
         var song = new Dictionary<string, object?>
         {
-            ["id"] = "s-1", ["title"] = "Track", ["mediaType"] = "song", ["artistId"] = ""
+            ["id"] = "s-1", ["title"] = "Track", ["mediaType"] = "song", ["artistId"] = "",
         };
         var xml = XmlBuilder.Song(song);
         var doc = Parse(xml);
@@ -113,9 +111,9 @@ public class ClientCompatibilityTests
             Created: "2026-01-15T10:30:00Z",
             Expires: "2027-01-15T10:30:00Z",
             VisitCount: 3,
-            Songs: new List<Dictionary<string, object?>>());
+            Songs: []);
 
-        var xml = XmlBuilder.Shares(new List<ShareXml> { share });
+        var xml = XmlBuilder.Shares([share]);
         var doc = Parse(xml);
         var s = (XmlElement)doc.DocumentElement!
             ["shares", "http://subsonic.org/restapi"]!
@@ -143,9 +141,9 @@ public class ClientCompatibilityTests
             Created: "2026-02-01T00:00:00Z",
             Expires: "2027-02-01T00:00:00Z",
             VisitCount: 5,
-            Songs: new List<Dictionary<string, object?>>());
+            Songs: []);
 
-        var xml = XmlBuilder.Shares(new List<ShareXml> { share });
+        var xml = XmlBuilder.Shares([share]);
         var doc = Parse(xml);
         var ns = "http://subsonic.org/restapi";
         var s = (XmlElement)doc.DocumentElement!["shares", ns]!.ChildNodes[0]!;
@@ -181,9 +179,9 @@ public class ClientCompatibilityTests
             Created: created.ToString("yyyy-MM-ddTHH:mm:ssZ"),
             Expires: expires.ToString("yyyy-MM-ddTHH:mm:ssZ"),
             VisitCount: 0,
-            Songs: new List<Dictionary<string, object?>>());
+            Songs: []);
 
-        var xml = XmlBuilder.Shares(new List<ShareXml> { share });
+        var xml = XmlBuilder.Shares([share]);
         var doc = Parse(xml);
         var s = (XmlElement)doc.DocumentElement!
             ["shares", "http://subsonic.org/restapi"]!

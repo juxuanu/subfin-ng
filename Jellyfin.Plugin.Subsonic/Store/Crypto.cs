@@ -1,4 +1,3 @@
-using System;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -21,10 +20,10 @@ public static class Crypto
 
     public static void SetSalt(string base64Salt)
     {
-        _GetKey(base64Salt); // pre-warm
+        GetKey(base64Salt); // pre-warm
     }
 
-    private static byte[] _GetKey(string base64Salt)
+    private static byte[] GetKey(string base64Salt)
     {
         if (_cachedKey is { } cached && cached.Salt == base64Salt) return cached.Key;
         var saltBytes = Encoding.UTF8.GetBytes(KdfSalt);
@@ -36,7 +35,7 @@ public static class Crypto
 
     public static byte[] Encrypt(string plaintext, string salt)
     {
-        var key = _GetKey(salt);
+        var key = GetKey(salt);
         var iv = RandomNumberGenerator.GetBytes(IvLen);
         var plaintextBytes = Encoding.UTF8.GetBytes(plaintext);
         var ciphertext = new byte[plaintextBytes.Length];
@@ -57,7 +56,7 @@ public static class Crypto
         if (blob.Length < IvLen + TagLen)
             throw new ArgumentException("Invalid encrypted blob");
 
-        var key = _GetKey(salt);
+        var key = GetKey(salt);
         var iv = blob[..IvLen];
         var tag = blob[IvLen..(IvLen + TagLen)];
         var ciphertext = blob[(IvLen + TagLen)..];

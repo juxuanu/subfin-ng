@@ -1,6 +1,4 @@
-using System;
 using System.Globalization;
-using System.Linq;
 using Jellyfin.Data;
 using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.Subsonic.Auth;
@@ -47,7 +45,7 @@ public class AdminController : ControllerBase
     }
 
     /// <summary>Generates a new OpenSubsonic password, replacing any earlier one. It's only ever shown here.</summary>
-    [HttpPost("users/{userId}/password")]
+    [HttpPost("users/{userId:guid}/password")]
     public IActionResult GeneratePassword(Guid userId)
     {
         if (_userManager.GetUserById(userId) is not { } user) return NotFound();
@@ -58,7 +56,7 @@ public class AdminController : ControllerBase
         return Ok(new GeneratedPassword(user.Username, password));
     }
 
-    [HttpDelete("users/{userId}/password")]
+    [HttpDelete("users/{userId:guid}/password")]
     public IActionResult RemovePassword(Guid userId)
     {
         if (_userManager.GetUserById(userId) is not { } user) return NotFound();

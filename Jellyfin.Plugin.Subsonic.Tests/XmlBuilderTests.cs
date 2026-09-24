@@ -1,5 +1,3 @@
-using System.Collections.Generic;
-using System.Linq;
 using System.Xml;
 using Jellyfin.Plugin.Subsonic.Response;
 using Xunit;
@@ -90,8 +88,8 @@ public class XmlBuilderTests
     {
         var index = new List<(string Letter, List<(string Id, string Name, int AlbumCount)> Artists)>
         {
-            ("A", new List<(string, string, int)> { ("guid1", "ACDC", 10) }),
-            ("B", new List<(string, string, int)> { ("guid2", "Beatles", 20) }),
+            ("A", [("guid1", "ACDC", 10)]),
+            ("B", [("guid2", "Beatles", 20)]),
         };
         var xml = XmlBuilder.Artists(index);
         var doc = Parse(xml);
@@ -110,7 +108,7 @@ public class XmlBuilderTests
     {
         var song = new Dictionary<string, object?>
         {
-            ["id"] = "abc", ["title"] = "Test Song", ["duration"] = 180, ["isDir"] = false
+            ["id"] = "abc", ["title"] = "Test Song", ["duration"] = 180, ["isDir"] = false,
         };
         var xml = XmlBuilder.Song(song);
         var doc = Parse(xml);
@@ -129,7 +127,7 @@ public class XmlBuilderTests
     {
         var albums = new List<Dictionary<string, object?>>
         {
-            new() { ["id"] = "al-guid1", ["name"] = "Abbey Road", ["artist"] = "The Beatles" }
+            new() { ["id"] = "al-guid1", ["name"] = "Abbey Road", ["artist"] = "The Beatles" },
         };
         var xml = XmlBuilder.AlbumList(albums);
         var doc = Parse(xml);
@@ -148,7 +146,7 @@ public class XmlBuilderTests
     {
         var playlists = new List<Dictionary<string, object?>>
         {
-            new() { ["id"] = "pl-guid1", ["name"] = "My Mix", ["songCount"] = 5 }
+            new() { ["id"] = "pl-guid1", ["name"] = "My Mix", ["songCount"] = 5 },
         };
         var xml = XmlBuilder.Playlists(playlists);
         var doc = Parse(xml);
@@ -166,7 +164,7 @@ public class XmlBuilderTests
     {
         var song = new Dictionary<string, object?>
         {
-            ["id"] = "abc", ["title"] = "Track", ["mediaType"] = "song"
+            ["id"] = "abc", ["title"] = "Track", ["mediaType"] = "song",
         };
         var xml = XmlBuilder.Song(song);
         var doc = Parse(xml);
@@ -201,9 +199,9 @@ public class XmlBuilderTests
             Created: "2026-01-01T00:00:00Z",
             Expires: "2027-01-01T00:00:00Z",
             VisitCount: 0,
-            Songs: new List<Dictionary<string, object?>>());
+            Songs: []);
 
-        var xml = XmlBuilder.Shares(new List<ShareXml> { share });
+        var xml = XmlBuilder.Shares([share]);
         var doc = Parse(xml);
         var root = doc.DocumentElement!;
         var shares = root["shares", "http://subsonic.org/restapi"]!;

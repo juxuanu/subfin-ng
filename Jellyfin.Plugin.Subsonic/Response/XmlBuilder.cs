@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using System.Xml;
@@ -72,7 +70,7 @@ public static class XmlBuilder
             int i => i.ToString(CultureInfo.InvariantCulture),
             long l => l.ToString(CultureInfo.InvariantCulture),
             double d => d.ToString(CultureInfo.InvariantCulture),
-            _ => SanitizeXmlString(value.ToString() ?? "")
+            _ => SanitizeXmlString(value.ToString() ?? ""),
         });
     }
 
@@ -81,7 +79,7 @@ public static class XmlBuilder
         w.WriteStartElement(elementName, Ns);
         foreach (var kv in d)
         {
-            if (kv.Value is List<Dictionary<string, object?>> children)
+            if (kv.Value is List<Dictionary<string, object?>>)
             {
                 // child element list (e.g. song[] inside album)
                 // determined by context; skip at this level — handled by callers
@@ -218,7 +216,7 @@ public static class XmlBuilder
     public static string Artist(Dictionary<string, object?> artist) => OkEnvelope(w =>
     {
         w.WriteStartElement("artist", Ns);
-        WriteAttrsThenChildren(w, artist, "album", WriteAlbumID3Content);
+        WriteAttrsThenChildren(w, artist, "album", WriteAlbumId3Content);
         w.WriteEndElement();
     });
 
@@ -294,7 +292,7 @@ public static class XmlBuilder
         foreach (var a in albums)
         {
             w.WriteStartElement("album", Ns);
-            if (element == "searchResult2") WriteAlbumShortContent(w, a); else WriteAlbumID3Content(w, a);  // Child vs AlbumID3
+            if (element == "searchResult2") WriteAlbumShortContent(w, a); else WriteAlbumId3Content(w, a);  // Child vs AlbumID3
             w.WriteEndElement();
         }
         foreach (var s in songs) { w.WriteStartElement("song", Ns); WriteSongContent(w, s); w.WriteEndElement(); }
@@ -306,7 +304,7 @@ public static class XmlBuilder
     public static string AlbumList(List<Dictionary<string, object?>> albums, bool list2 = false) => OkEnvelope(w =>
     {
         w.WriteStartElement(list2 ? "albumList2" : "albumList", Ns);
-        foreach (var album in albums) { w.WriteStartElement("album", Ns); if (list2) WriteAlbumID3Content(w, album); else WriteAlbumShortContent(w, album); w.WriteEndElement(); }
+        foreach (var album in albums) { w.WriteStartElement("album", Ns); if (list2) WriteAlbumId3Content(w, album); else WriteAlbumShortContent(w, album); w.WriteEndElement(); }
         w.WriteEndElement();
     });
 
@@ -390,7 +388,7 @@ public static class XmlBuilder
     {
         w.WriteStartElement(v2 ? "starred2" : "starred", Ns);
         foreach (var a in artists) { w.WriteStartElement("artist", Ns); foreach (var kv in a) WriteAttr(w, kv.Key, kv.Value); w.WriteEndElement(); }
-        foreach (var a in albums) { w.WriteStartElement("album", Ns); if (v2) WriteAlbumID3Content(w, a); else WriteAlbumShortContent(w, a); w.WriteEndElement(); }
+        foreach (var a in albums) { w.WriteStartElement("album", Ns); if (v2) WriteAlbumId3Content(w, a); else WriteAlbumShortContent(w, a); w.WriteEndElement(); }
         foreach (var s in songs) { w.WriteStartElement("song", Ns); WriteSongContent(w, s); w.WriteEndElement(); }
         w.WriteEndElement();
     });
@@ -498,7 +496,7 @@ public static class XmlBuilder
     }
 
     // AlbumID3 shape: no isDir/title/album/parent (those are Child fields)
-    private static void WriteAlbumID3Content(XmlWriter w, Dictionary<string, object?> album)
+    private static void WriteAlbumId3Content(XmlWriter w, Dictionary<string, object?> album)
     {
         foreach (var kv in album)
         {

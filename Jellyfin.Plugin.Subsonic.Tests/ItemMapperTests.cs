@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using Jellyfin.Plugin.Subsonic.Mappers;
 using Xunit;
 
@@ -54,6 +52,6 @@ public class ItemMapperTests
         var index = result["index"] as System.Collections.IList;
         Assert.NotNull(index);
         // Should have at least A and B groups
-        Assert.True(index!.Count >= 2);
+        Assert.True(index.Count >= 2);
     }
 }

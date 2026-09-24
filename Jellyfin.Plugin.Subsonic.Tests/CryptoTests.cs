@@ -1,4 +1,3 @@
-using System;
 using System.Security.Cryptography;
 using Jellyfin.Plugin.Subsonic.Store;
 using Xunit;

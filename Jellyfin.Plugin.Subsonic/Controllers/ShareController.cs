@@ -1,13 +1,8 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
 using System.IO.Compression;
-using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
 using Jellyfin.Data;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Database.Implementations.Enums;
@@ -28,7 +23,7 @@ namespace Jellyfin.Plugin.Subsonic.Controllers;
 /// </summary>
 [ApiController]
 [Route("opensubsonic/share")]
-public class ShareController : ControllerBase
+public partial class ShareController : ControllerBase
 {
     private readonly IUserManager _userManager;
     private readonly ILibraryManager _library;
@@ -65,12 +60,15 @@ public class ShareController : ControllerBase
             .Replace("{{TRACKS_JSON}}", JsonSerializer.Serialize(tracks))  // escapes <, > and & for the script block
             .Replace("{{DESCRIPTION}}", System.Net.WebUtility.HtmlEncode(share.Description ?? "Shared Music"));
         if (!owner.HasPermission(PermissionKind.EnableContentDownloading))
-            html = Regex.Replace(html, "<!--zip-->.*?<!--/zip-->", "", RegexOptions.Singleline);
+            html = ZipSection().Replace(html, "");
         return Content(html, "text/html; charset=utf-8");
     }
 
+    [GeneratedRegex("<!--zip-->.*?<!--/zip-->", RegexOptions.Singleline)]
+    private static partial Regex ZipSection();
+
     [HttpGet("{uid}/m3u")]
-    public IActionResult ShareM3u(string uid)
+    public IActionResult ShareM3U(string uid)
     {
         if (!TryOpen(uid, out var share, out var owner, out var secret, out var error)) return error!;
         SubsonicStore.IncrementShareVisitCount(uid);
@@ -110,11 +108,11 @@ public class ShareController : ControllerBase
         {
             using (var zip = new ZipArchive(zipFile, ZipArchiveMode.Create, leaveOpen: true))
             {
-                var m3u = new StringBuilder("#EXTM3U\n");
+                var playlistText = new StringBuilder("#EXTM3U\n");
                 foreach (var (audio, fileName) in songs)
                 {
-                    m3u.Append($"#EXTINF:{ItemMapper.TicksToSeconds(audio.RunTimeTicks)},{audio.AlbumArtists.FirstOrDefault() ?? ""} - {audio.Name ?? ""}\n");
-                    m3u.Append(fileName).Append('\n');
+                    playlistText.Append($"#EXTINF:{ItemMapper.TicksToSeconds(audio.RunTimeTicks)},{audio.AlbumArtists.FirstOrDefault() ?? ""} - {audio.Name ?? ""}\n");
+                    playlistText.Append(fileName).Append('\n');
 
                     using var entryStream = zip.CreateEntry(fileName, CompressionLevel.NoCompression).Open();
                     using var file = System.IO.File.OpenRead(audio.Path);
@@ -122,7 +120,7 @@ public class ShareController : ControllerBase
                 }
 
                 using var playlist = new StreamWriter(zip.CreateEntry("playlist.m3u8").Open(), new UTF8Encoding(false));
-                await playlist.WriteAsync(m3u.ToString());
+                await playlist.WriteAsync(playlistText.ToString());
             }
             zipFile.Position = 0;
             return File(zipFile, "application/zip", $"share-{uid}.zip");

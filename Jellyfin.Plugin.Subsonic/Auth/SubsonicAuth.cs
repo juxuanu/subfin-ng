@@ -1,12 +1,8 @@
-using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
-using System.Threading.Tasks;
 using Jellyfin.Plugin.Subsonic.Controllers;
 using Jellyfin.Plugin.Subsonic.Response;
 using Jellyfin.Plugin.Subsonic.Store;
@@ -136,9 +132,9 @@ public class SubsonicAuth
     /// <summary>A new OpenSubsonic password: 4 groups of 5 characters without look-alikes (about 116 bits).</summary>
     public static string GeneratePassword()
     {
-        const string Chars = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        const string chars = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
         return string.Join('-', Enumerable.Range(0, 4).Select(_ =>
-            new string(Enumerable.Range(0, 5).Select(_ => Chars[RandomNumberGenerator.GetInt32(Chars.Length)]).ToArray())));
+            new string(Enumerable.Range(0, 5).Select(_ => chars[RandomNumberGenerator.GetInt32(chars.Length)]).ToArray())));
     }
 
     internal enum ShareStatus { Valid, Invalid, Expired }

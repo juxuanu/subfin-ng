@@ -1,7 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using Jellyfin.Data.Enums;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Audio;
 
@@ -52,7 +48,7 @@ public static class ItemMapper
             .Select(r => r.TrimEnd('/', '\\'))
             .Where(r => r.Length > 0 && path.Length > r.Length && path.StartsWith(r, StringComparison.Ordinal) && path[r.Length] is '/' or '\\')
             .MaxBy(r => r.Length);
-        return (root == null ? System.IO.Path.GetFileName(path) : path[(root.Length + 1)..]).Replace('\\', '/');
+        return (root == null ? Path.GetFileName(path) : path[(root.Length + 1)..]).Replace('\\', '/');
     }
 
     // ── Artist ───────────────────────────────────────────────────────────────
@@ -212,7 +208,7 @@ public static class ItemMapper
             ["transcodedSuffix"] = suffix,
             ["transcodedContentType"] = mimeType,
             ["discNumber"] = song.ParentIndexNumber ?? 1,
-            ["path"] = relativePath ?? System.IO.Path.GetFileName(song.Path ?? ""),
+            ["path"] = relativePath ?? Path.GetFileName(song.Path ?? ""),
             ["bitDepth"] = mediaStream?.BitDepth ?? 16,
             ["samplingRate"] = mediaStream?.SampleRate ?? 44100,
             ["channelCount"] = mediaStream?.Channels ?? 2,

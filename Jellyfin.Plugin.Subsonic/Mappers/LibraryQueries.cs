@@ -1,6 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Text.RegularExpressions;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
@@ -17,7 +14,7 @@ namespace Jellyfin.Plugin.Subsonic.Mappers;
 /// /subfin web UI controller, so both expand share items and resolve artists
 /// identically (special-character-safe tag entity IDs).
 /// </summary>
-public static class LibraryQueries
+public static partial class LibraryQueries
 {
     /// <summary>
     /// Expands a list of Subsonic IDs (artist / al- album / pl- playlist / bare track)
@@ -33,12 +30,12 @@ public static class LibraryQueries
 
             if (id.StartsWith("al-", StringComparison.Ordinal))
             {
-                if (!Guid.TryParse(id.Substring(3), out var albumGuid)) continue;
+                if (!Guid.TryParse(id.AsSpan(3), out var albumGuid)) continue;
                 AddAlbumTracks(library, user, albumGuid, seen, flatIds);
             }
             else if (id.StartsWith("pl-", StringComparison.Ordinal))
             {
-                if (!Guid.TryParse(id.Substring(3), out var plGuid)) continue;
+                if (!Guid.TryParse(id.AsSpan(3), out var plGuid)) continue;
                 var pl = library.GetItemById<Playlist>(plGuid);
                 if (pl == null || !pl.IsVisible(user)) continue;
                 // Resolved by Jellyfin; entries whose item no longer exists are skipped
@@ -61,7 +58,7 @@ public static class LibraryQueries
                     {
                         IncludeItemTypes = [BaseItemKind.MusicAlbum],
                         AlbumArtistIds = [artistItem.Id],
-                        Recursive = true
+                        Recursive = true,
                     }).OfType<MusicAlbum>().ToList();
                     foreach (var album in albums)
                         AddAlbumTracks(library, user, album.Id, seen, flatIds);
@@ -127,14 +124,14 @@ public static class LibraryQueries
                 }
 
                 var artistEntity = library.GetArtist(key.Name);
-                if (artistEntity == null) continue;
-
                 byKey[key.Key] = (artistEntity.Id.ToString("N"), key.Name, 1);
             }
         }
         return byKey.Values.Select(v => (v.Id, v.Name, v.Count)).OrderBy(v => v.Name).ToList();
     }
 
-    private static readonly Regex _artistKeyRegex = new(@"[\s._/*'""\-]+", RegexOptions.Compiled);
-    private static string CanonicalArtistKey(string name) => _artistKeyRegex.Replace(name.ToLowerInvariant(), "");
+    [GeneratedRegex(@"[\s._/*'""\-]+")]
+    private static partial Regex ArtistKeySeparators();
+
+    internal static string CanonicalArtistKey(string name) => ArtistKeySeparators().Replace(name.ToLowerInvariant(), "");
 }

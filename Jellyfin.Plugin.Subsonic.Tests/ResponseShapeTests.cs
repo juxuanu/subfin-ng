@@ -1,5 +1,3 @@
-using System.Collections.Generic;
-using System.Linq;
 using System.Xml;
 using Jellyfin.Plugin.Subsonic.Controllers;
 using Jellyfin.Plugin.Subsonic.Mappers;
@@ -92,7 +90,7 @@ public class ResponseShapeTests
         var el = Root(XmlBuilder.Users([user]))["users", Ns]!["user", Ns]!;
         Assert.Equal("true", el.GetAttribute("adminRole"));
         Assert.False(el.HasAttribute("folder"));
-        Assert.Equal(new[] { "7", "9" }, el.GetElementsByTagName("folder", Ns).Cast<XmlElement>().Select(f => f.InnerText));
+        Assert.Equal(["7", "9"], el.GetElementsByTagName("folder", Ns).Cast<XmlElement>().Select(f => f.InnerText));
     }
 
     [Theory]

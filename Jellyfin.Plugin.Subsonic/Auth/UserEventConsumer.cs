@@ -1,5 +1,3 @@
-using System;
-using System.Threading.Tasks;
 using Jellyfin.Data.Events.Users;
 using Jellyfin.Plugin.Subsonic.Store;
 using MediaBrowser.Controller.Events;
