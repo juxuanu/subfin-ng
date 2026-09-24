@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/juxuanu/subfin-plugin/main/logo.png",
     "versions": [
       {
+        "version": "12.1.8.0",
+        "changelog": "- release: bump to v12.1.8.0\n- feat: artist and album details from Jellyfin instead of Last.fm\n- release: add v12.1.7.1 to the plugin manifest [skip ci]",
+        "targetAbi": "12.1.0.0",
+        "sourceUrl": "https://github.com/juxuanu/subfin-plugin/releases/download/v12.1.8.0/jellyfin-plugin-subfin_12.1.8.0.zip",
+        "checksum": "9ecb6024f077eae1ec1613ee1eb3951b",
+        "timestamp": "2026-09-24T02:50:42Z"
+      },
+      {
         "version": "12.1.7.1",
         "changelog": "- release: bump to v12.1.7.1\n- fix: artistId matches the ids getArtists returns\n- release: add v12.1.7.0 to the plugin manifest [skip ci]",
         "targetAbi": "12.1.0.0",
