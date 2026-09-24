@@ -62,9 +62,10 @@ jobs:
         run: |
           PREV_TAG=$(git describe --tags --abbrev=0 --match 'v*.*.*.*' HEAD^ 2>/dev/null || true)
           if [ -n "$PREV_TAG" ]; then RANGE="${PREV_TAG}..HEAD"; else RANGE="-20"; fi
+          # release: commits (version bumps, manifest updates) aren't changes to the plugin
           {
             echo 'CHANGELOG<<EOF'
-            git log --no-merges --format='- %s' $RANGE
+            git log --no-merges --invert-grep --grep='^release: ' --format='- %s' "$RANGE"
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
