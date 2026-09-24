@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/juxuanu/subfin-plugin/main/logo.png",
     "versions": [
       {
+        "version": "12.1.8.3",
+        "changelog": "- release: bump to v12.1.8.3\n- release: bump to v12.1.8.2",
+        "targetAbi": "12.1.0.0",
+        "sourceUrl": "https://github.com/juxuanu/subfin-plugin/releases/download/v12.1.8.3/jellyfin-plugin-subfin_12.1.8.3.zip",
+        "checksum": "4215464b06e46326d89992096b441ddd",
+        "timestamp": "2026-09-24T11:06:44Z"
+      },
+      {
         "version": "12.1.8.1",
         "changelog": "- release: bump to v12.1.8.1\n- fix: artist images for artists without a photo in Jellyfin\n- release: add v12.1.8.0 to the plugin manifest [skip ci]",
         "targetAbi": "12.1.0.0",
