@@ -237,7 +237,7 @@ public class SubsonicController : ControllerBase
             "getlyricsbysongid" => await GetLyricsBySongId(user, p, format),
             "stream" => await Stream(auth, user, p, format),
             "download" => Download(auth, user, p, format),
-            "getcoverart" => GetCoverArt(p, format),
+            "getcoverart" => GetCoverArt(user, p, format),
             "getavatar" => GetAvatar(user, p, format),
             _ => ErrorResponse(format, ErrorCode.NotFound, $"Unknown method: {method}")
         };
@@ -371,57 +371,8 @@ public class SubsonicController : ControllerBase
         var artist = GetVisibleItem<MusicArtist>(guid);
         if (artist == null) return ErrorResponse(format, ErrorCode.NotFound, "Artist not found");
 
-        var folderIds = GetEffectiveFolderIds(null);
-
-        var query = new InternalItemsQuery(user)
-        {
-            IncludeItemTypes = [BaseItemKind.MusicAlbum],
-            AlbumArtistIds = [guid],
-            Recursive = true,
-        };
-        ApplyFolderScoping(query, folderIds);
-
-        var albums = _library.GetItemList(query).OfType<MusicAlbum>().ToList();
+        var albums = ArtistAlbums(user, artist);
         _logger.LogInformation("[Subfin] getArtist {Name} (guid={Guid}): {Count} albums", artist.Name, guid, albums.Count);
-
-        // Fallback 1: if no albums found, re-resolve via GetArtist(name) — the guid we received
-        // may be a folder/hierarchy entity (whose ID doesn't work with AlbumArtistIds) rather than
-        // the tag/index entity. GetArtist(name) returns the tag entity.
-        if (albums.Count == 0 && !string.IsNullOrEmpty(artist.Name))
-        {
-            var tagEntity = _library.GetArtist(artist.Name);
-            if (tagEntity != null && tagEntity.Id != guid)
-            {
-                _logger.LogInformation("[Subfin] getArtist fallback: tag entity {TagId} differs from passed {Guid}, retrying", tagEntity.Id, guid);
-                var fallbackQuery = new InternalItemsQuery(user)
-                {
-                    IncludeItemTypes = [BaseItemKind.MusicAlbum],
-                    AlbumArtistIds = [tagEntity.Id],
-                    Recursive = true,
-                };
-                ApplyFolderScoping(fallbackQuery, folderIds);
-                albums = _library.GetItemList(fallbackQuery).OfType<MusicAlbum>().ToList();
-            }
-        }
-
-        // Fallback 2: artists with special characters (e.g. *NSYNC, AC/DC) may still return 0
-        // albums because Jellyfin's AlbumArtistIds lookup matches entity name lowercased against
-        // CleanValue, which strips special chars (*nsync ≠ nsync). Fall back to fetching all
-        // albums and filtering by AlbumArtist name in C#.
-        if (albums.Count == 0 && !string.IsNullOrEmpty(artist.Name))
-        {
-            _logger.LogInformation("[Subfin] getArtist name-filter fallback for {Name}", artist.Name);
-            var allQuery = new InternalItemsQuery(user)
-            {
-                IncludeItemTypes = [BaseItemKind.MusicAlbum],
-                Recursive = true,
-            };
-            ApplyFolderScoping(allQuery, folderIds);
-            albums = _library.GetItemList(allQuery).OfType<MusicAlbum>()
-                .Where(a => string.Equals(a.AlbumArtist, artist.Name, StringComparison.OrdinalIgnoreCase)
-                         || a.AlbumArtists.Any(n => string.Equals(n, artist.Name, StringComparison.OrdinalIgnoreCase)))
-                .ToList();
-        }
 
         var artistId = artist.Id.ToString("N");
         var mapped = ItemMapper.ToArtistWithAlbums(artist, albums, a => ItemMapper.ToAlbumShort(a, artistId, UserDataFor(a), StarredAt(a)));
@@ -1423,17 +1374,21 @@ public class SubsonicController : ControllerBase
             })
             .ToList();
 
-        // Jellyfin's image endpoint serves the artist's image
-        var artistImageUrl = $"{Request.Scheme}://{Request.Host}{Request.PathBase}/Items/{artist.Id:N}/Images/Primary";
+        // Jellyfin's image endpoint serves the artist's image (or the one standing in for it)
+        var imageItem = CoverImageItem(user, artist);
+        var artistImageUrl = imageItem == null ? null : $"{Request.Scheme}://{Request.Host}{Request.PathBase}/Items/{imageItem.Id:N}/Images/Primary";
 
         var jsonKey = v2 ? "artistInfo2" : "artistInfo";
         var jsonInfo = new Dictionary<string, object>
         {
-            ["smallImageUrl"] = artistImageUrl,
-            ["mediumImageUrl"] = artistImageUrl,
-            ["largeImageUrl"] = artistImageUrl,
             ["similarArtist"] = similarArtistDicts.Select(s => (object)s).ToList(),
         };
+        if (artistImageUrl != null)
+        {
+            jsonInfo["smallImageUrl"] = artistImageUrl;
+            jsonInfo["mediumImageUrl"] = artistImageUrl;
+            jsonInfo["largeImageUrl"] = artistImageUrl;
+        }
         if (bio != null) jsonInfo["biography"] = bio;
         if (mbid != null) jsonInfo["musicBrainzId"] = mbid;
         var json = SubsonicEnvelope.Ok(new() { [jsonKey] = jsonInfo });
@@ -1774,15 +1729,97 @@ public class SubsonicController : ControllerBase
 
     // ── getCoverArt / getAvatar ──────────────────────────────────────────────
 
-    private IActionResult GetCoverArt(QueryParams p, string format)
+    /// <summary>The albums of an artist the user can see.</summary>
+    private List<MusicAlbum> ArtistAlbums(User user, MusicArtist artist)
+    {
+        var folderIds = GetEffectiveFolderIds(null);
+        var guid = artist.Id;
+
+        var query = new InternalItemsQuery(user)
+        {
+            IncludeItemTypes = [BaseItemKind.MusicAlbum],
+            AlbumArtistIds = [guid],
+            Recursive = true,
+        };
+        ApplyFolderScoping(query, folderIds);
+
+        var albums = _library.GetItemList(query).OfType<MusicAlbum>().ToList();
+
+        // Fallback 1: if no albums found, re-resolve via GetArtist(name) — the guid we received
+        // may be a folder/hierarchy entity (whose ID doesn't work with AlbumArtistIds) rather than
+        // the tag/index entity. GetArtist(name) returns the tag entity.
+        if (albums.Count == 0 && !string.IsNullOrEmpty(artist.Name))
+        {
+            var tagEntity = _library.GetArtist(artist.Name);
+            if (tagEntity != null && tagEntity.Id != guid)
+            {
+                var fallbackQuery = new InternalItemsQuery(user)
+                {
+                    IncludeItemTypes = [BaseItemKind.MusicAlbum],
+                    AlbumArtistIds = [tagEntity.Id],
+                    Recursive = true,
+                };
+                ApplyFolderScoping(fallbackQuery, folderIds);
+                albums = _library.GetItemList(fallbackQuery).OfType<MusicAlbum>().ToList();
+            }
+        }
+
+        // Fallback 2: artists with special characters (e.g. *NSYNC, AC/DC) may still return 0
+        // albums because Jellyfin's AlbumArtistIds lookup matches entity name lowercased against
+        // CleanValue, which strips special chars (*nsync ≠ nsync). Fall back to fetching all
+        // albums and filtering by AlbumArtist name in C#.
+        if (albums.Count == 0 && !string.IsNullOrEmpty(artist.Name))
+        {
+            var allQuery = new InternalItemsQuery(user)
+            {
+                IncludeItemTypes = [BaseItemKind.MusicAlbum],
+                Recursive = true,
+            };
+            ApplyFolderScoping(allQuery, folderIds);
+            albums = _library.GetItemList(allQuery).OfType<MusicAlbum>()
+                .Where(a => string.Equals(a.AlbumArtist, artist.Name, StringComparison.OrdinalIgnoreCase)
+                         || a.AlbumArtists.Any(n => string.Equals(n, artist.Name, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+        }
+
+        return albums;
+    }
+
+    private IActionResult GetCoverArt(User user, QueryParams p, string format)
     {
         if (!TryParseItemId(p.Id, format, out var guid, out var err)) return err!;
-        if (GetVisibleItem(guid) == null) return ErrorResponse(format, ErrorCode.NotFound, "Cover art not found");
+        if (GetVisibleItem(guid) is not { } item || CoverImageItem(user, item) is not { } cover)
+            return ErrorResponse(format, ErrorCode.NotFound, "Cover art not found");
 
         // Jellyfin's image endpoint does the scaling; "size" bounds the longest edge.
         var size = p.GetInt("size", 0);
         var scale = size > 0 ? $"?maxWidth={size}&maxHeight={size}" : "";
-        return Redirect($"{Request.PathBase}/Items/{guid:N}/Images/Primary{scale}");
+        return Redirect($"{Request.PathBase}/Items/{cover.Id:N}/Images/Primary{scale}");
+    }
+
+    /// <summary>
+    /// The item whose main image shows for this one: itself if it has one. Otherwise an artist uses its
+    /// other Jellyfin entry with the same name (Jellyfin keeps one for the library folder and one for
+    /// downloaded artist metadata), then one of its album covers; an album uses a song's embedded art;
+    /// a song uses its album's cover. Null if there's none.
+    /// </summary>
+    private BaseItem? CoverImageItem(User user, BaseItem item)
+    {
+        if (item.HasImage(ImageType.Primary)) return item;
+        IEnumerable<BaseItem> candidates = item switch
+        {
+            MusicArtist artist => _library.GetItemList(new InternalItemsQuery
+                {
+                    IncludeItemTypes = [BaseItemKind.MusicArtist],
+                    Name = artist.Name,
+                })
+                .Where(a => a.Id != artist.Id)
+                .Concat(ArtistAlbums(user, artist).OrderByDescending(a => a.ProductionYear ?? 0)),
+            MusicAlbum album => AlbumTracks(user, album.Id),
+            Audio song => song.AlbumEntity is { } album ? [album] : [],
+            _ => [],
+        };
+        return candidates.FirstOrDefault(c => c.HasImage(ImageType.Primary) && c.IsVisibleStandalone(user));
     }
 
     private IActionResult GetAvatar(User user, QueryParams p, string format)

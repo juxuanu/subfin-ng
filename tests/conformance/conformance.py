@@ -51,9 +51,10 @@ def record(name, ok, detail="", kind="behaviour"):
     results.append({"check": name, "ok": bool(ok), "kind": kind, "detail": str(detail)[:400]})
 
 
-def jf(method, path, token=None, check=True, **kw):
+def jf(method, path, token=None, check=True, headers=None, **kw):
     """Jellyfin's own API, as the admin unless another access token is given."""
-    r = requests.request(method, f"{URL}{path}", headers={"Authorization": f'MediaBrowser Token="{token or creds["JF_TOKEN"]}"'}, timeout=30, **kw)
+    r = requests.request(method, f"{URL}{path}", timeout=30, **kw,
+                         headers={"Authorization": f'MediaBrowser Token="{token or creds["JF_TOKEN"]}"', **(headers or {})})
     if check:
         r.raise_for_status()
     return r
@@ -296,6 +297,33 @@ for name in ("Album One", "Double Album"):
         c = call("getCoverArt", {"id": albums[name].get("coverArt") or albums[name]["id"], "size": 64}, raw_resp=True)
         record(f"getCoverArt({name}): 200 image/*", c.status_code == 200 and c.headers.get("content-type", "").startswith("image/"),
                (c.status_code, c.headers.get("content-type")))
+
+# Artists without an image of their own show one of their album covers (the newest), like Navidrome
+def artist_cover(name):
+    a = next((x for x in artists if x["name"] == name), None)
+    if a is None:
+        return None
+    c = requests.get(f"{API}/getCoverArt", params={**auth(), "id": a.get("coverArt") or a["id"], "size": 64}, allow_redirects=False, timeout=30)
+    if c.status_code in (301, 302, 307):
+        final = requests.get(c.headers["location"] if c.headers["location"].startswith("http") else f"{creds['HOST']}{c.headers['location']}", timeout=30)
+        return c.headers["location"], final.status_code, final.headers.get("content-type", "")
+    return None, c.status_code, err(c.json().get("subsonic-response")) if c.headers.get("content-type", "").startswith("application/json") else c.text[:80]
+if {"Double Album", "Compilation"} <= set(albums):
+    got = artist_cover("Test Artist")
+    record("an artist without an image shows its newest album's cover",
+           got and f"/Items/{albums['Double Album']['id']}/Images/Primary" in got[0] and got[1] == 200 and got[2].startswith("image/"), got)
+    got = artist_cover("Various Artists")
+    record("... for a compilation's artist too", got and f"/Items/{albums['Compilation']['id']}/Images/Primary" in got[0] and got[1] == 200, got)
+    got = artist_cover("Björk Ñandú")
+    record("an artist with no image anywhere -> error 70", got and got[1] == 200 and got[2] == 70, got)
+    ta = next((x for x in artists if x["name"] == "Test Artist"), None)
+    if ta:
+        import base64, subprocess
+        jpg = subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=yellow:s=200x200", "-frames:v", "1",
+                              "-f", "image2", "-c:v", "mjpeg", "-"], capture_output=True).stdout
+        jf("POST", f"/Items/{ta['id']}/Images/Primary", headers={"Content-Type": "image/jpeg"}, data=base64.b64encode(jpg))
+        got = artist_cover("Test Artist")
+        record("an artist with its own image shows it", got and f"/Items/{ta['id']}/Images/Primary" in got[0] and got[1] == 200, got)
 
 # ── user data ────────────────────────────────────────────────────────────────
 if song_ids and "Album One" in albums:
