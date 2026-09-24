@@ -1,72 +1,62 @@
 # Subfin — OpenSubsonic API for Jellyfin
 
-Exposes an [OpenSubsonic](https://opensubsonic.netlify.app/)-compatible API directly from Jellyfin, so Subsonic and Navidrome clients can use your Jellyfin music library. There's no separate server or proxy, and no separate accounts: apps sign in with Jellyfin usernames.
+Subfin lets Subsonic-compatible music apps play your Jellyfin music library. It adds an [OpenSubsonic](https://opensubsonic.netlify.app/) API to Jellyfin itself, so there's no second server to run and no second set of accounts: apps sign in with Jellyfin usernames, and Jellyfin's library access, parental ratings and account rules apply.
 
-## Requirements
+Requires Jellyfin **12.1** or later.
 
-- Jellyfin **12.1** or later (built against 12.1.0)
-- .NET 10 runtime (included in Jellyfin 12.x)
+## Install
 
-## Installation
-
-1. In Jellyfin, go to **Dashboard → Plugins → Repositories** and add:
+1. Build the plugin (needs the .NET 10 SDK):
+   ```sh
+   dotnet publish -c Release Jellyfin.Plugin.Subsonic
    ```
-   https://raw.githubusercontent.com/williamkray/subfin-plugin/main/jellyfin-plugin-subfin-manifest.json
-   ```
-2. Go to **Catalog**, find **Subfin**, and install it.
+2. Copy `Jellyfin.Plugin.Subsonic/bin/Release/net10.0/publish/Jellyfin.Plugin.Subsonic.dll` and `meta.json` into a new folder `plugins/Subfin_<version>/` in Jellyfin's data directory. That's `/var/lib/jellyfin/plugins/` for the Linux packages and `/config/plugins/` in the Docker image.
 3. Restart Jellyfin.
 
-To install a build of your own, run `dotnet publish -c Release Jellyfin.Plugin.Subsonic`. Copy `Jellyfin.Plugin.Subsonic.dll` and `meta.json` into `<jellyfin config>/plugins/Subfin_<version>/`, then restart Jellyfin.
+## Set up
 
-## Connecting a client
+1. In Jellyfin, open **Dashboard → Plugins → Subfin**.
+2. Click **Generate** next to each user who'll use a music app. Copy the password: it's shown only once.
+3. In the app, add a server:
 
-An administrator first generates an **OpenSubsonic password** for each user who'll use a Subsonic app: in **Dashboard → Plugins → Subfin**, click **Generate** next to the user. The page shows the password once, together with the server path and username to enter in the app.
+   | | |
+   | --- | --- |
+   | Server | your Jellyfin address followed by `/opensubsonic`, e.g. `https://jellyfin.example.com/opensubsonic` (the settings page shows the exact path) |
+   | Username | the Jellyfin username |
+   | Password | the OpenSubsonic password from step 2 |
 
-| Setting | Value |
-| --- | --- |
-| Server URL | `https://<your-jellyfin>/opensubsonic`, including Jellyfin's base URL if it has one (e.g. `https://example.com/jellyfin/opensubsonic`) |
-| Username | the Jellyfin username |
-| Password | the user's OpenSubsonic password |
+That's all. Use HTTPS if the app connects from outside your home network.
 
-The OpenSubsonic password works with both ways Subsonic apps sign in: token login, the way Navidrome prefers apps to sign in and the default in most apps, and plain password login. Token login sends `md5(password + salt)`, so the server has to know the password itself. The plugin therefore stores it encrypted instead of hashed.
+## Passwords
 
-Apps that offer plain password login (often called **legacy authentication**) can use the Jellyfin password instead. Jellyfin checks it, including login providers such as LDAP and the lockout after failed attempts. Jellyfin only stores a hash of that password, so it can't be used for token login: that gets error 41. API keys aren't offered (error 42). Reach Jellyfin over HTTPS, since plain password login sends the password with every request.
+The OpenSubsonic password works with token login, the way Navidrome prefers apps to sign in and the default in most apps, and with plain password login. Token login needs the server to know the password, so Subfin stores it encrypted.
 
-Jellyfin's rules apply to Subsonic logins as they do to its own:
+Apps that offer plain password (“legacy”) login can use the Jellyfin password instead. It can't be used for token login, because Jellyfin only stores a hash of it.
 
-- **Account checks.** Disabled accounts, remote access and access schedules are checked on every request.
-- **Content.** Library access and parental ratings apply, and downloads need the download permission.
-- **Changes.** Changing the Jellyfin password, disabling an account or changing its policy takes effect on the next request. So do regenerating and removing an OpenSubsonic password, which signs out the apps using it. Deleting a user deletes their OpenSubsonic password.
-- **Devices.** Each app appears in Jellyfin's dashboard as a device of its own, named after the app. Its plays count towards the user's history and reach Jellyfin's scrobbler plugins.
+**Regenerate** or **Remove** on the settings page signs out the apps using the old password straight away. Changes in Jellyfin, such as disabling a user or changing their permissions, also take effect on the next request. Changing a user's Jellyfin password doesn't change their OpenSubsonic password.
 
-Apps may send parameters in the query string or as a form `POST` (the `formPost` extension).
+## Sharing
+
+Apps can create share links for songs, albums and playlists. A link opens a page that plays the shared songs, with an M3U playlist and a ZIP download if the sharing user may download. It doesn't need a Jellyfin login, and it stops working when it expires or is deleted. Sharing can be turned off on the settings page.
 
 ## Settings
 
 In **Dashboard → Plugins → Subfin**:
 
-- **OpenSubsonic passwords** – generate, regenerate or remove each user's password (see above).
-- **Last.fm API key** – enables artist biographies and images (`getArtistInfo`, `getArtistInfo2`, `getAlbumInfo`).
-- **Enable sharing** – see below. When it's off, share links stop working and apps can't create shares.
-- **Log API requests** – logs each Subsonic call's method and format.
+- **OpenSubsonic passwords**: one per user, see above.
+- **Last.fm API key**: adds artist biographies and images.
+- **Enable sharing**: when off, apps can't create share links and existing links stop working.
+- **Log API requests**: logs each request's method, for troubleshooting.
 
-## Sharing
+## Updating
 
-Apps create shares with `createShare`. The link, `https://<your-jellyfin>/opensubsonic/share/<id>?secret=…`, opens a page that plays the shared songs, with an M3U playlist and, if the sharer may download, a ZIP download. No Jellyfin login is needed.
+Replace the two files in the plugin folder and restart the Jellyfin service, for example with `systemctl restart jellyfin` or by restarting the container. The Restart button in Jellyfin's dashboard keeps the old plugin code loaded.
 
-A share link can only play the songs it shares, and only while the sharer could: it stops working when it expires, when it's deleted, and while the sharer's account is disabled or outside its schedule. Users list, change and delete their shares from their app (`getShares`, `updateShare`, `deleteShare`).
+## Upgrading from earlier versions
 
-## Upgrading from device logins
-
-Earlier versions had their own logins: app passwords per device, managed at `/subfin/`, with the API at `/rest`. When this version first starts, it does the following:
-
-- **Shares and play queues** move from each device to its Jellyfin user. Links keep their secret but move from `/subfin/share/…` to `/opensubsonic/share/…`.
-- **Devices** are removed, along with their stored app passwords.
-- **Per-device library selections** are dropped. Use Jellyfin's library access for each user instead.
-
-Each app then needs the new server URL and a new password: an OpenSubsonic password generated on the plugin page, or the Jellyfin password in apps with plain password login.
+Versions with their own device logins (the `/subfin/` page, API at `/rest`) are upgraded on first start. Shares and play queues move to their Jellyfin user, and the device logins and their passwords are deleted. Share links move from `/subfin/share/…` to `/opensubsonic/share/…`. Apps need the new server path and a new password.
 
 ## Development
 
 - `dotnet test` runs the unit tests.
-- [`tests/conformance`](tests/conformance/README.md) checks a build end to end against a throwaway Jellyfin and the OpenSubsonic spec.
+- `tests/conformance/run.sh` checks a build against a throwaway Jellyfin and the OpenSubsonic spec; `--ui` also tests the settings page in a browser. See [its README](tests/conformance/README.md).
