@@ -3,8 +3,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>Jellyfin.Plugin.Subsonic</AssemblyName>
     <RootNamespace>Jellyfin.Plugin.Subsonic</RootNamespace>
-    <AssemblyVersion>12.1.8.6</AssemblyVersion>
-    <FileVersion>12.1.8.6</FileVersion>
+    <AssemblyVersion>12.1.8.7</AssemblyVersion>
+    <FileVersion>12.1.8.7</FileVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <Optimize>true</Optimize>
