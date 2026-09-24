@@ -19,3 +19,4 @@ scripts/probe-api.sh
 
 # Conformance suite work directory (containers, generated media, reports)
 tests/conformance/.work/
+tests/bench/.work/

@@ -40,10 +40,3 @@ CREATE TABLE IF NOT EXISTS starred_at (
   starred_at TEXT NOT NULL,
   PRIMARY KEY (jellyfin_user_id, item_id)
 );
-
-CREATE TABLE IF NOT EXISTS derived_cache (
-  cache_key TEXT PRIMARY KEY,
-  value_json TEXT NOT NULL,
-  cached_at TEXT NOT NULL,
-  last_source_change_at TEXT
-);

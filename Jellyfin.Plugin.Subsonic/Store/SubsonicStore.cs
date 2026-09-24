@@ -127,8 +127,8 @@ public static class SubsonicStore
             tx.Commit();
         }
         Exec(null, "CREATE INDEX IF NOT EXISTS idx_shares_owner ON shares(owner_user_id)");
-        // Artist and album details from Last.fm, cached by versions that used it
-        Exec(null, "DELETE FROM derived_cache WHERE cache_key LIKE 'lastfm:%'");
+        // Earlier versions cached artist lists, genres and Last.fm details; everything is read from Jellyfin now
+        Exec(null, "DROP TABLE IF EXISTS derived_cache");
     }
 
     private static bool TableExists(string table) =>
@@ -373,17 +373,6 @@ public static class SubsonicStore
         }
     }
 
-    // ── Derived Cache ────────────────────────────────────────────────────────
-
-    public record DerivedCacheEntry(string CacheKey, string ValueJson, string CachedAt, string? LastSourceChangeAt)
-    {
-        /// <summary>
-        /// When it was stored. SQLite's datetime('now') is UTC without saying so; read as local time,
-        /// every entry looked hours old on servers east of UTC and was rebuilt on every request.
-        /// </summary>
-        public DateTimeOffset CachedAtUtc => DateTimeOffset.Parse(CachedAt, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal);
-    }
-
     // ── Starred timestamps ───────────────────────────────────────────────────
 
     /// <summary>Records (keeping the first date) or forgets when a user starred an item.</summary>
@@ -414,39 +403,6 @@ public static class SubsonicStore
             using var reader = cmd.ExecuteReader();
             while (reader.Read()) result[reader.GetString(0)] = reader.GetString(1);
             return result;
-        }
-    }
-
-    public static DerivedCacheEntry? GetDerivedCache(string cacheKey)
-    {
-        lock (DbLock)
-        {
-            using var cmd = Db.CreateCommand();
-            cmd.CommandText = "SELECT * FROM derived_cache WHERE cache_key = @k";
-            cmd.Parameters.AddWithValue("@k", cacheKey);
-            using var reader = cmd.ExecuteReader();
-            if (!reader.Read()) return null;
-            return new DerivedCacheEntry(
-                reader.GetString(reader.GetOrdinal("cache_key")),
-                reader.GetString(reader.GetOrdinal("value_json")),
-                reader.GetString(reader.GetOrdinal("cached_at")),
-                reader.IsDBNull(reader.GetOrdinal("last_source_change_at")) ? null : reader.GetString(reader.GetOrdinal("last_source_change_at")));
-        }
-    }
-
-    public static void SetDerivedCache(string cacheKey, string valueJson, string? lastSourceChangeAt)
-    {
-        lock (DbLock)
-        {
-            using var cmd = Db.CreateCommand();
-            cmd.CommandText = @"
-                INSERT INTO derived_cache (cache_key, value_json, cached_at, last_source_change_at)
-                VALUES (@k, @v, datetime('now'), @lsc)
-                ON CONFLICT(cache_key) DO UPDATE SET value_json = @v, cached_at = datetime('now'), last_source_change_at = @lsc";
-            cmd.Parameters.AddWithValue("@k", cacheKey);
-            cmd.Parameters.AddWithValue("@v", valueJson);
-            cmd.Parameters.AddWithValue("@lsc", (object?)lastSourceChangeAt ?? DBNull.Value);
-            cmd.ExecuteNonQuery();
         }
     }
 

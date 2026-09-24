@@ -92,9 +92,8 @@ public static partial class LibraryQueries
     }
 
     /// <summary>
-    /// Builds the artist index (tag entity IDs + display names + album counts) from
-    /// albums in scope. Uses ILibraryManager.GetArtist(name) so returned IDs match what
-    /// AlbumArtistIds queries expect — see the "Jellyfin artist entity model" notes.
+    /// Builds the artist index (artist entity IDs + display names + album counts) from
+    /// albums in scope. IDs come from <see cref="ResolveArtists"/>, as the artist ids on songs and albums do.
     /// </summary>
     public static List<(string Id, string Name, int AlbumCount)> BuildArtistList(ILibraryManager library, User user, List<string>? folderIds)
     {
@@ -110,24 +109,35 @@ public static partial class LibraryQueries
 
         // Every album artist, not only the first: songs and albums list them all (OpenSubsonic
         // "artists"), and clients open those artists from the getArtists list.
-        var byKey = new Dictionary<string, (string Id, string Name, int Count)>(StringComparer.OrdinalIgnoreCase);
+        var byKey = new Dictionary<string, (string Name, int Count)>(StringComparer.OrdinalIgnoreCase);
         foreach (var album in allAlbums)
         {
             var names = album.AlbumArtists.Count > 0 ? album.AlbumArtists : album.AlbumArtist is { Length: > 0 } one ? [one] : [];
             foreach (var key in names.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => (Name: n, Key: CanonicalArtistKey(n)))
                          .DistinctBy(n => n.Key))
             {
-                if (byKey.TryGetValue(key.Key, out var existing))
-                {
-                    byKey[key.Key] = existing with { Count = existing.Count + 1 };
-                    continue;
-                }
-
-                var artistEntity = library.GetArtist(key.Name);
-                byKey[key.Key] = (artistEntity.Id.ToString("N"), key.Name, 1);
+                byKey[key.Key] = byKey.TryGetValue(key.Key, out var existing) ? existing with { Count = existing.Count + 1 } : (key.Name, 1);
             }
         }
-        return byKey.Values.Select(v => (v.Id, v.Name, v.Count)).OrderBy(v => v.Name).ToList();
+
+        var entities = ResolveArtists(library, byKey.Values.Select(v => v.Name).ToList());
+        return byKey.Values.Select(v => (entities[v.Name].Id.ToString("N"), v.Name, v.Count)).OrderBy(v => v.Name).ToList();
+    }
+
+    /// <summary>
+    /// The artist entity for each name, whose id clients get: the artist's folder when it has one.
+    /// One lookup for all names (one per name took seconds on large libraries); GetArtist(name) only
+    /// for names without an entity, as it creates one. GetArtist can't do it all: it matches names
+    /// lowercased by SQLite, which leaves non-ASCII capitals, so for "Björk Ñandú" it misses the
+    /// folder's entity and creates a second one.
+    /// </summary>
+    public static Dictionary<string, MusicArtist> ResolveArtists(ILibraryManager library, IReadOnlyList<string> names)
+    {
+        var found = library.GetArtists(names);  // by cleaned name
+        return names.Distinct().ToDictionary(n => n, n => found.GetValueOrDefault(n, [])
+            .Where(a => string.Equals(a.Name, n, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(a => a.IsAccessedByName ? 1 : 0)
+            .FirstOrDefault() ?? library.GetArtist(n));
     }
 
     [GeneratedRegex(@"[\s._/*'""\-]+")]

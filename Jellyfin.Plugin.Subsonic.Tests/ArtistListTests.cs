@@ -15,7 +15,8 @@ public class ArtistListTests
 {
     private const string Ns = "http://subsonic.org/restapi";
 
-    private static MusicArtist Artist(string name) => new() { Name = name, Id = Guid.NewGuid() };
+    // A folder artist (Music/Artist/...), not one Jellyfin keeps by name only (no parent)
+    private static MusicArtist Artist(string name) => new() { Name = name, Id = Guid.NewGuid(), ParentId = Guid.NewGuid() };
 
     [Fact]
     public void GetArtists_ListsEveryAlbumArtist_WithTheirAlbumCounts()
@@ -28,7 +29,9 @@ public class ArtistListTests
             new MusicAlbum { Name = "The Well-Tempered Clavier", AlbumArtists = ["Glenn Gould", "Johann Sebastian Bach"] },
             new MusicAlbum { Name = "Brahms", AlbumArtists = ["Glenn Gould", "Leonard Bernstein", "glenn gould"] },
         });
-        library.GetArtist(Arg.Any<string>()).Returns(call => artists[call.Arg<string>()]);
+        // Jellyfin can have a by-name artist beside the folder one; the list uses the folder's, as GetArtist(name) does
+        library.GetArtists(Arg.Any<IReadOnlyList<string>>()).Returns(call => (IReadOnlyDictionary<string, MusicArtist[]>)call.Arg<IReadOnlyList<string>>()
+            .ToDictionary(n => n, n => new[] { new MusicArtist { Name = n, Id = Guid.NewGuid() }, artists[n] }));
 
         var list = LibraryQueries.BuildArtistList(library, new User("u", "p", "r"), null);
 
@@ -36,6 +39,25 @@ public class ArtistListTests
             [("Glenn Gould", 3), ("Johann Sebastian Bach", 2), ("Leonard Bernstein", 1)],
             list.Select(a => (a.Name, a.AlbumCount)));
         Assert.All(list, a => Assert.Equal(artists[a.Name].Id.ToString("N"), a.Id));
+        library.DidNotReceive().GetArtist(Arg.Any<string>());  // one lookup for all of them
+    }
+
+    [Theory]
+    [InlineData(false)]  // no entity yet
+    [InlineData(true)]   // only one whose name matches once cleaned ("New-Artist"); the batch lookup compares cleaned names
+    public void GetArtists_FallsBackToGetArtist_WithoutAnExactMatch(bool similarEntity)
+    {
+        var library = Substitute.For<ILibraryManager>();
+        library.GetItemList(Arg.Any<InternalItemsQuery>()).Returns(new List<BaseItem> { new MusicAlbum { Name = "Solo", AlbumArtists = ["New Artist"] } });
+        library.GetArtists(Arg.Any<IReadOnlyList<string>>()).Returns(similarEntity
+            ? new Dictionary<string, MusicArtist[]> { ["New Artist"] = [Artist("New-Artist")] }
+            : new Dictionary<string, MusicArtist[]>());
+        var exact = Artist("New Artist");
+        library.GetArtist("New Artist").Returns(exact);
+
+        var list = LibraryQueries.BuildArtistList(library, new User("u", "p", "r"), null);
+
+        Assert.Equal([(exact.Id.ToString("N"), "New Artist", 1)], list);
     }
 
     [Fact]

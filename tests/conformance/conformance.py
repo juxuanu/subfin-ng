@@ -941,6 +941,10 @@ if song_ids:
     record("a batch scrobble counts every song once at its own time",
            [g.get("playCount") for g in got] == [1, 1] and got[0].get("played", "").startswith("2023-11-14T22:13:20") and got[1].get("played", "").startswith("2023-11-14T22:18:20"),
            [(g.get("playCount"), g.get("played")) for g in got])
+    recent = [a["name"] for a in (call("getAlbumList2", {"type": "recent", "size": 50}, check_schema=False, label="recent after plays") or {})
+              .get("albumList2", {}).get("album", [])]
+    record("recently played albums: each played album once (the two-disc one too), no unplayed ones",
+           sorted(recent) == ["Album One", "Compilation", "Double Album"], recent)
 
 # ── lyrics: 01 Song 1.lrc (synced), 02 Song 2.txt (plain), 01 Secret.lrc (Restricted library) ──
 if song_ids:

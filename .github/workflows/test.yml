@@ -1,8 +1,8 @@
 name: Test
 
-# Unit tests and the OpenSubsonic conformance suite (tests/conformance: the plugin in a real Jellyfin,
-# run with podman). Runs on pushes to main and on pull requests; the release workflow runs it too and
-# only publishes when it passes.
+# Unit tests, the OpenSubsonic conformance suite (tests/conformance: the plugin in a real Jellyfin, run
+# with podman) and the performance budgets (tests/bench: a large library). Runs on pushes to main and on
+# pull requests; the release workflow runs it too and only publishes when it passes.
 on:
   push:
     branches: [main]
@@ -80,4 +80,39 @@ jobs:
             tests/conformance/.work/report.json
             tests/conformance/.work/ui-*.png
           include-hidden-files: true  # .work/ is a hidden directory
+          if-no-files-found: ignore
+
+  bench:
+    name: Performance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          cache-dependency-glob: tests/bench/*.py
+
+      - name: Install podman and ffmpeg
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends podman ffmpeg
+
+      - name: Time the endpoints on a large library
+        run: tests/bench/run.sh
+
+      - name: Upload timings
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench
+          path: tests/bench/.work/bench.json
+          include-hidden-files: true
           if-no-files-found: ignore
