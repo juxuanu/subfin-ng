@@ -75,4 +75,5 @@ jobs:
           path: |
             tests/conformance/.work/report.json
             tests/conformance/.work/ui-*.png
+          include-hidden-files: true  # .work/ is a hidden directory
           if-no-files-found: ignore

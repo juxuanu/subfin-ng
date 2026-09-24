@@ -124,8 +124,10 @@ with sync_playwright() as p:
     titles = player.locator("#tracklist .track-title").all_inner_texts()
     check("the share page lists the shared album's songs", titles == ["Disc 1 Track 1", "Disc 1 Track 2", "Disc 2 Track 1", "Disc 2 Track 2"], titles)
     check("... and links its M3U and ZIP", player.locator("a.download-link").count() == 2, player.locator("a.download-link").all_inner_texts())
-    # The player loads nothing before a click (preload="none", and browsers block autoplay)
-    loaded = "(id) => { const a = document.getElementById('audio'); return a.src.includes('id=' + id) && a.duration > 0 && a.error === null; }"
+    # The player loads nothing before a click (preload="none", and browsers block autoplay). CI runners
+    # have no sound card, so playing may end in an audio output ("media sink") error; any other fails.
+    loaded = ("(id) => { const a = document.getElementById('audio');"
+              " return a.src.includes('id=' + id) && a.duration > 0 && (a.error === null || a.error.message.includes('MediaSink')); }")
     for i, name in ((0, "clicking the first song plays it"), (2, "clicking another song plays it")):
         player.click(f"#tr-{i}")
         try:
