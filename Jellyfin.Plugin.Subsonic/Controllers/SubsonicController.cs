@@ -62,6 +62,10 @@ public class SubsonicController : ControllerBase
     private readonly ILogger<SubsonicController> _logger;
     private static readonly ConcurrentDictionary<string, byte> _refreshInProgress = new();
 
+    // How each user's songs were last streamed (the file as is, or transcoded). Subsonic reports
+    // playback in separate scrobble requests, and Jellyfin's dashboard shows the play method they give.
+    private static readonly ConcurrentDictionary<(Guid User, Guid Item), (PlayMethod Method, DateTime At)> _streamedAs = new();
+
     // Controllers are created per request, so these are the authenticated user of the current call
     // and its parameters (query string plus, for POST, the form body).
     private User? _currentUser;
@@ -1034,6 +1038,19 @@ public class SubsonicController : ControllerBase
         _logger.LogInformation("[Subfin] scrobble: recorded play from {At:o}", at);
     }
 
+    private static void RememberStreamedAs(Guid userId, Guid itemId, PlayMethod method)
+    {
+        var now = DateTime.UtcNow;
+        if (_streamedAs.Count > 2000)
+            foreach (var stale in _streamedAs.Where(kv => kv.Value.At < now.AddHours(-12)).Select(kv => kv.Key).ToList())
+                _streamedAs.TryRemove(stale, out _);
+        _streamedAs[(userId, itemId)] = (method, now);
+    }
+
+    /// <summary>How the song was streamed to this user; the file as is unless the plugin transcoded it.</summary>
+    private static PlayMethod StreamedAs(Guid userId, Guid itemId) =>
+        _streamedAs.TryGetValue((userId, itemId), out var streamed) ? streamed.Method : PlayMethod.DirectPlay;
+
     /// <summary>
     /// The Jellyfin device a request plays on: one per user and Subsonic client (the <c>c</c> parameter),
     /// so each app gets its own session in the dashboard.
@@ -1060,16 +1077,23 @@ public class SubsonicController : ControllerBase
             var (deviceId, clientName) = ClientDevice(auth);
             var clientVersion = _query.First("v") is { Length: > 0 } cv ? cv : "1.0.0";
             var session = await _sessions.LogSessionActivity(clientName, clientVersion, deviceId, clientName, remoteIp, user);
+            // Every report carries it: left out, it reads as 0, which is Transcode
+            var playMethod = StreamedAs(user.Id, item.Id);
 
-            await _sessions.OnPlaybackStart(new PlaybackStartInfo
+            // Jellyfin counts a play when it starts. Clients report "now playing" when a song starts and
+            // submit it when it ends: a song this session already started is only stopped, not started again.
+            if (session.NowPlayingItem?.Id != item.Id)
             {
-                ItemId = item.Id,
-                SessionId = session.Id,
-                PositionTicks = 0L,
-                PlayMethod = PlayMethod.DirectPlay,
-                IsPaused = false,
-                CanSeek = true
-            });
+                await _sessions.OnPlaybackStart(new PlaybackStartInfo
+                {
+                    ItemId = item.Id,
+                    SessionId = session.Id,
+                    PositionTicks = 0L,
+                    PlayMethod = playMethod,
+                    IsPaused = false,
+                    CanSeek = true
+                });
+            }
 
             if (finished)
             {
@@ -1090,6 +1114,7 @@ public class SubsonicController : ControllerBase
                     ItemId = item.Id,
                     SessionId = session.Id,
                     PositionTicks = 0L,
+                    PlayMethod = playMethod,
                     IsPaused = false
                 });
                 _logger.LogInformation("[Subfin] scrobble: sent start+progress (now playing)");
@@ -1790,15 +1815,15 @@ public class SubsonicController : ControllerBase
         _logger.LogInformation("[Subfin] stream id={Id} format={Format} bitRate={BitRate} timeOff={TimeOff} needsTranscode={NeedsTranscode}",
             id, targetFormat, bitRate, timeOff, needsTranscode);
 
-        if (!needsTranscode)
-            return PhysicalFile(item.Path, ItemMapper.AudioMimeType(item.Container), null, true);
-
-        var apiKey = await GetOrCreatePluginApiKey();
+        var apiKey = needsTranscode ? await GetOrCreatePluginApiKey() : null;
+        if (needsTranscode && string.IsNullOrEmpty(apiKey))
+            _logger.LogWarning("[Subfin] Could not obtain plugin API key — serving direct");
         if (string.IsNullOrEmpty(apiKey))
         {
-            _logger.LogWarning("[Subfin] Could not obtain plugin API key — serving direct");
+            RememberStreamedAs(user.Id, guid, PlayMethod.DirectPlay);
             return PhysicalFile(item.Path, ItemMapper.AudioMimeType(item.Container), null, true);
         }
+        RememberStreamedAs(user.Id, guid, PlayMethod.Transcode);
 
         var (container, audioCodec, mimeType) = MapTranscodeFormat(targetFormat);
         var qs = $"audioCodec={audioCodec}&static=false" +

@@ -324,6 +324,30 @@ if song_ids and "Album One" in albums:
     record("getNowPlaying lists the song being played, with its user and player",
            any(e.get("id") == song_ids[1] and e.get("username") == SU and isinstance(e.get("playerId"), int) for e in np), np)
 
+    # Jellyfin's dashboard shows how a song is played: the file as is, unless the plugin transcoded it.
+    # The compilation's songs aren't played anywhere else in this suite.
+    comp_songs = [x["id"] for x in call("getAlbum", {"id": albums["Compilation"]["id"]}, check_schema=False, label="compilation songs").get("album", {}).get("song", [])]
+    def play_method(song):
+        sess = [x for x in jf("GET", "/Sessions").json() if x.get("UserName") == SU and x.get("Client") == "conformance"]
+        return [x.get("PlayState", {}).get("PlayMethod") for x in sess if (x.get("NowPlayingItem") or {}).get("Id", "").replace("-", "") == song]
+    def play_count(song):
+        return call("getSong", {"id": song}, check_schema=False, label="play count").get("song", {}).get("playCount", 0)
+    if len(comp_songs) >= 2:
+        call("stream", {"id": comp_songs[0]}, raw_resp=True)
+        call("scrobble", {"id": comp_songs[0], "submission": "false"}, check_schema=False, label="now playing direct")
+        got = play_method(comp_songs[0])
+        record("a song streamed as is shows as direct play in Jellyfin", got == ["DirectPlay"], got)
+        # A client repeats "now playing" and then submits the finished song: one play
+        call("scrobble", {"id": comp_songs[0], "submission": "false"}, check_schema=False, label="now playing again")
+        call("scrobble", {"id": comp_songs[0], "submission": "true"}, check_schema=False, label="finished")
+        record("now playing, then finished, counts one play", play_count(comp_songs[0]) == 1, play_count(comp_songs[0]))
+        call("stream", [("id", comp_songs[1]), ("format", "mp3"), ("maxBitRate", "128")], raw_resp=True)
+        call("scrobble", {"id": comp_songs[1], "submission": "false"}, check_schema=False, label="now playing transcoded")
+        got = play_method(comp_songs[1])
+        record("a transcoded song shows as transcoding in Jellyfin", got == ["Transcode"], got)
+    else:
+        record("compilation has 2 songs for the playback checks", False, comp_songs)
+
     # playlists
     r = call("createPlaylist", [("name", "Conformance"), ("songId", song_ids[0]), ("songId", song_ids[1])])
     pl = (r or {}).get("playlist", {})
