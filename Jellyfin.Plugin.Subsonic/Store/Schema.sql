@@ -1,6 +1,14 @@
 -- Subfin Plugin SQLite schema.
 -- No jellyfin_url anywhere — single-instance scope.
 
+-- The OpenSubsonic password an administrator generated for a Jellyfin user. Token logins
+-- (md5 of password + salt) need the plaintext, so it's stored encrypted rather than hashed.
+CREATE TABLE IF NOT EXISTS subsonic_passwords (
+  user_id TEXT PRIMARY KEY,
+  password_encrypted BLOB NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- One per Jellyfin user
 CREATE TABLE IF NOT EXISTS play_queue (
   user_id TEXT PRIMARY KEY,

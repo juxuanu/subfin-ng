@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
@@ -43,6 +44,7 @@ public sealed class SubsonicAuthTests : IDisposable
             .ThrowsAsync(new AuthenticationException("Invalid username or password entered."));
         _users.AuthenticateUser("locked", Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>())
             .ThrowsAsync(new SecurityException("The locked account is currently disabled."));
+        _users.GetUserByName("alice").Returns(_alice);
         _auth = new SubsonicAuth(_users, NullLogger<SubsonicAuth>.Instance);
     }
 
@@ -100,12 +102,104 @@ public sealed class SubsonicAuthTests : IDisposable
         Assert.Contains("disabled", error.Message);
     }
 
+    // ── OpenSubsonic passwords ────────────────────────────────────────────────
+
+    private const string Generated = "abcde-FGHJK-23456-mnpqr";
+
+    private void GenerateForAlice(string password = Generated) => SubsonicStore.SetSubsonicPassword(_alice.Id.ToString("N"), password);
+
+    private static (string, string)[] Token(string user, string password, string salt = "c19b2d") =>
+        [("u", user), ("t", Convert.ToHexStringLower(MD5.HashData(System.Text.Encoding.UTF8.GetBytes(password + salt)))), ("s", salt)];
+
     [Fact]
-    public async Task TokenAuthentication_IsError41()
+    public async Task TokenLogin_WithTheOpenSubsonicPassword_SignsIn()
     {
-        // Jellyfin only stores a password hash, so md5(password + salt) can't be checked
-        Assert.Equal(41, ErrorCodeOf(await Resolve(("u", "alice"), ("t", "26719a1196d2a940705a59634eb18eab"), ("s", "c19b2d"))));
+        GenerateForAlice();
+        var result = Assert.IsType<AuthResult>(await Resolve(Token("alice", Generated)));
+        Assert.Equal(_alice.Id, result.UserId);
         await JellyfinWasAsked(0);
+    }
+
+    [Fact]
+    public async Task TokenLogin_AcceptsAnUppercaseToken()
+    {
+        GenerateForAlice();
+        var token = Token("alice", Generated);
+        token[1] = ("t", token[1].Item2.ToUpperInvariant());
+        Assert.IsType<AuthResult>(await Resolve(token));
+    }
+
+    [Fact]
+    public async Task TokenLogin_WithAnotherPassword_IsError40()
+    {
+        GenerateForAlice();
+        Assert.Equal(40, ErrorCodeOf(await Resolve(Token("alice", Password))));
+        Assert.Equal(40, ErrorCodeOf(await Resolve(Token("nobody", Generated))));
+    }
+
+    [Fact]
+    public async Task TokenLogin_WithoutAnOpenSubsonicPassword_IsError41()
+    {
+        // Jellyfin only stores a hash of the Jellyfin password, so md5(password + salt) can't be checked against it
+        var error = Assert.IsType<SubsonicAuth.AuthError>(await Resolve(Token("alice", Password)));
+        Assert.Equal(41, error.Code);
+        Assert.Contains("Dashboard", error.Message);
+        await JellyfinWasAsked(0);
+    }
+
+    [Theory]
+    [InlineData("t")]
+    [InlineData("s")]
+    public async Task TokenLogin_MissingTokenOrSalt_IsError10(string missing)
+    {
+        GenerateForAlice();
+        Assert.Equal(10, ErrorCodeOf(await Resolve(Token("alice", Generated).Where(kv => kv.Item1 != missing).ToArray())));
+    }
+
+    [Theory]
+    [InlineData(Generated)]
+    [InlineData("enc:61626364652d4647484a4b2d32333435362d6d6e707172")]
+    public async Task OpenSubsonicPassword_WorksAsAPlainPassword(string password)
+    {
+        GenerateForAlice();
+        Assert.Equal(_alice.Id, Assert.IsType<AuthResult>(await Resolve(("u", "alice"), ("p", password))).UserId);
+        // checked by the plugin: no Jellyfin login, so nothing towards Jellyfin's lockout
+        await JellyfinWasAsked(0);
+    }
+
+    [Fact]
+    public async Task JellyfinPassword_StillWorks_AlongsideTheOpenSubsonicPassword()
+    {
+        GenerateForAlice();
+        Assert.IsType<AuthResult>(await Resolve(("u", "alice"), ("p", Password)));
+        await JellyfinWasAsked(1);
+    }
+
+    [Fact]
+    public async Task RegeneratingThePassword_RetiresTheOldOne()
+    {
+        GenerateForAlice();
+        Assert.IsType<AuthResult>(await Resolve(Token("alice", Generated)));
+        GenerateForAlice("vwxyz-VWXYZ-78923-abcde");
+        Assert.Equal(40, ErrorCodeOf(await Resolve(Token("alice", Generated))));
+        Assert.Equal(40, ErrorCodeOf(await Resolve(("u", "alice"), ("p", Generated))));
+        Assert.IsType<AuthResult>(await Resolve(Token("alice", "vwxyz-VWXYZ-78923-abcde")));
+    }
+
+    [Fact]
+    public async Task RemovingThePassword_EndsTokenLogins()
+    {
+        GenerateForAlice();
+        SubsonicStore.DeleteSubsonicPassword(_alice.Id.ToString("N"));
+        Assert.Equal(41, ErrorCodeOf(await Resolve(Token("alice", Generated))));
+    }
+
+    [Fact]
+    public void GeneratedPasswords_AreFourGroupsWithoutLookAlikes()
+    {
+        var passwords = Enumerable.Range(0, 200).Select(_ => SubsonicAuth.GeneratePassword()).ToList();
+        Assert.All(passwords, pw => Assert.Matches("^([a-km-zA-HJ-NP-Z2-9]{5}-){3}[a-km-zA-HJ-NP-Z2-9]{5}$", pw));
+        Assert.Equal(passwords.Count, passwords.Distinct().Count());
     }
 
     [Theory]

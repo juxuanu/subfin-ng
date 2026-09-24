@@ -1,11 +1,11 @@
 {
   "category": "Music",
   "changelog": "Initial release",
-  "description": "OpenSubsonic API for Jellyfin. Use Subsonic/Navidrome clients (DSub, Substreamer, etc.) with your Jellyfin music library and your Jellyfin login.",
+  "description": "OpenSubsonic API for Jellyfin. Use Subsonic/Navidrome clients (DSub, Substreamer, etc.) with your Jellyfin music library and Jellyfin accounts.",
   "guid": "4a3b2c1d-e5f6-7890-abcd-ef1234567890",
   "imageUrl": "https://home.kray.pw/jellyfin-plugin-subfin-logo.png",
   "name": "Subfin",
-  "overview": "Exposes an OpenSubsonic-compatible API at /opensubsonic so that Subsonic clients can browse and stream your Jellyfin music library, signing in with Jellyfin usernames and passwords.",
+  "overview": "Exposes an OpenSubsonic-compatible API at /opensubsonic so that Subsonic clients can browse and stream your Jellyfin music library, signing in with Jellyfin accounts.",
   "owner": "williamkray",
   "targetAbi": "12.1.0.0",
   "timestamp": "2026-01-01T00:00:00Z",

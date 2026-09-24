@@ -25,15 +25,17 @@ namespace Jellyfin.Plugin.Subsonic.Auth;
 public record AuthResult(Guid UserId, string? ShareId = null, HashSet<string>? ShareAllowedIds = null);
 
 /// <summary>
-/// Resolves Subsonic credentials. Users sign in with their Jellyfin username and password, which
-/// Jellyfin itself checks, so its login providers, lockout, disabled accounts, remote-access rules
-/// and access schedules all apply. Share links sign in as u=share_&lt;uid&gt; with the share's secret.
+/// Resolves Subsonic credentials. Users sign in with their Jellyfin username and either the
+/// OpenSubsonic password an administrator generated for them (as a password or a token), or their
+/// Jellyfin password, which Jellyfin itself checks (its login providers and lockout apply). Share
+/// links sign in as u=share_&lt;uid&gt; with the share's secret. Disabled accounts, remote access
+/// and access schedules are checked on every request (<see cref="AccessRules"/>).
 /// </summary>
 public class SubsonicAuth
 {
     // Subsonic clients send the password with every request and Jellyfin's check is deliberately
     // slow, so verified logins are remembered briefly (keyed by an HMAC of name and password under a
-    // per-process key, and forgotten when the user changes: LoginCacheInvalidator). Failures always
+    // per-process key, and forgotten when the user changes: UserEventConsumer). Failures always
     // go to Jellyfin, so its lockout counts them.
     private static readonly TimeSpan LoginCacheTime = TimeSpan.FromMinutes(5);
     private readonly ConcurrentDictionary<string, (Guid UserId, DateTime Expires)> _logins = new();
@@ -59,7 +61,7 @@ public class SubsonicAuth
         var s = query.First("s");
 
         if (!string.IsNullOrEmpty(query.First("apiKey")))
-            return new AuthError(ErrorCode.AuthMechanismNotSupported, "API keys are not supported: sign in with your Jellyfin username and password.");
+            return new AuthError(ErrorCode.AuthMechanismNotSupported, "API keys are not supported: sign in with your Jellyfin username and your OpenSubsonic or Jellyfin password.");
         if (!string.IsNullOrEmpty(p) && (!string.IsNullOrEmpty(t) || !string.IsNullOrEmpty(s)))
             return new AuthError(ErrorCode.ConflictingAuthMechanisms, "Multiple conflicting authentication mechanisms provided.");
 
@@ -68,13 +70,19 @@ public class SubsonicAuth
 
         if (string.IsNullOrEmpty(u))
             return new AuthError(ErrorCode.RequiredParameterMissing, "Required parameter 'u' (username) missing.");
-        // Token authentication needs the plaintext password; Jellyfin only keeps a hash of it.
-        if (string.IsNullOrEmpty(p) && (!string.IsNullOrEmpty(t) || !string.IsNullOrEmpty(s)))
-            return new AuthError(ErrorCode.TokenAuthNotSupported, "Token authentication is not supported: use password authentication (\"legacy\" login in many clients).");
+        if (!string.IsNullOrEmpty(t) || !string.IsNullOrEmpty(s))
+            return ResolveToken(u, t, s);
         if (string.IsNullOrEmpty(p))
             return new AuthError(ErrorCode.RequiredParameterMissing, "Required parameter 'p' (password) missing.");
         if (DecodePassword(p) is not { } password)
             return new AuthError(ErrorCode.WrongCredentials, "Wrong username or password.");
+
+        // The generated OpenSubsonic password is checked here, without Jellyfin
+        if (_userManager.GetUserByName(u) is { } named && SubsonicPasswordOf(named.Id) is { } generated
+            && CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(generated), Encoding.UTF8.GetBytes(password)))
+        {
+            return new AuthResult(named.Id);
+        }
 
         var key = LoginKey(u, password);
         if (_logins.TryGetValue(key, out var known) && known.Expires > DateTime.UtcNow)
@@ -99,6 +107,38 @@ public class SubsonicAuth
             _logger.LogInformation("[Subfin] login refused for {User}: {Reason}", u, ex.Message);
             return new AuthError(ErrorCode.NotAuthorized, ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Token login: t = md5(password + s). Only the generated OpenSubsonic password can be checked
+    /// this way, since Jellyfin keeps just a hash of the Jellyfin password.
+    /// </summary>
+    private object ResolveToken(string u, string t, string s)
+    {
+        if (string.IsNullOrEmpty(t) || string.IsNullOrEmpty(s))
+            return new AuthError(ErrorCode.RequiredParameterMissing, "Token login needs both 't' and 's'.");
+        if (_userManager.GetUserByName(u) is not { } user)
+            return new AuthError(ErrorCode.WrongCredentials, "Wrong username or password.");
+        if (SubsonicPasswordOf(user.Id) is not { } generated)
+        {
+            return new AuthError(ErrorCode.TokenAuthNotSupported,
+                "This account has no OpenSubsonic password for token login: an administrator can generate one in "
+                + "Dashboard > Plugins > Subfin, or use password (\"legacy\") login with the Jellyfin password.");
+        }
+        var expected = Convert.ToHexStringLower(MD5.HashData(Encoding.UTF8.GetBytes(generated + s)));
+        return CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(expected), Encoding.ASCII.GetBytes(t.ToLowerInvariant()))
+            ? new AuthResult(user.Id)
+            : new AuthError(ErrorCode.WrongCredentials, "Wrong username or password.");
+    }
+
+    private static string? SubsonicPasswordOf(Guid userId) => SubsonicStore.GetSubsonicPassword(userId.ToString("N"));
+
+    /// <summary>A new OpenSubsonic password: 4 groups of 5 characters without look-alikes (about 116 bits).</summary>
+    public static string GeneratePassword()
+    {
+        const string Chars = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        return string.Join('-', Enumerable.Range(0, 4).Select(_ =>
+            new string(Enumerable.Range(0, 5).Select(_ => Chars[RandomNumberGenerator.GetInt32(Chars.Length)]).ToArray())));
     }
 
     internal enum ShareStatus { Valid, Invalid, Expired }

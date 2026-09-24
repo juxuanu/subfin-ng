@@ -2,10 +2,11 @@
 # End-to-end OpenSubsonic conformance run: build the plugin, start a throwaway Jellyfin (podman) with it
 # and a generated test library, and check the Subsonic API against the OpenSubsonic spec.
 #
-# usage: tests/conformance/run.sh [--base-url /jellyfin] [--image IMAGE] [--keep]
+# usage: tests/conformance/run.sh [--base-url /jellyfin] [--image IMAGE] [--keep] [--ui]
 #   --base-url  serve Jellyfin under a path prefix, as behind a path-based reverse proxy
 #   --image     Jellyfin container image (default: the 12.1 image the suite was written against)
 #   --keep      leave the Jellyfin container running afterwards (http://127.0.0.1:18096)
+#   --ui        also drive the plugin settings page in a headless Firefox (Playwright downloads it)
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -14,11 +15,13 @@ SPEC_REPO=https://github.com/opensubsonic/open-subsonic-api.git
 SPEC_REF=bed1688  # the spec revision these checks were written against
 
 KEEP=
+UI=
 while [ $# -gt 0 ]; do
   case "$1" in
     --base-url) export BASEURL="$2"; shift 2 ;;
     --image) export IMAGE="$2"; shift 2 ;;
     --keep) KEEP=1; shift ;;
+    --ui) UI=1; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -48,6 +51,12 @@ echo "== checks"
 status=0
 uv run -q "$HERE/conformance.py" "$WORK/creds.env" "$WORK/open-subsonic-api/openapi" "$WORK/report.json" || status=$?
 echo "full report: $WORK/report.json"
+if [ -n "$UI" ]; then
+  echo "== settings page"
+  uv run -q --with playwright python -m playwright install firefox >/dev/null
+  uv run -q "$HERE/ui.py" "$WORK/creds.env" "$WORK" || status=$?
+  echo "screenshots: $WORK/ui-*.png"
+fi
 
 [ -n "$KEEP" ] || podman rm -f subfin-jf >/dev/null
 exit $status

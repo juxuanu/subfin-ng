@@ -51,15 +51,12 @@ def record(name, ok, detail="", kind="behaviour"):
     results.append({"check": name, "ok": bool(ok), "kind": kind, "detail": str(detail)[:400]})
 
 
-def auth(**over):
-    """Subsonic credentials: the limited user's Jellyfin username and password."""
-    a = {"u": SU, "p": SP, "v": "1.16.1", "c": "conformance", "f": "json"}
-    a.update(over)
-    return {k: v for k, v in a.items() if v is not None}
-
-
-def admin(**over):
-    return auth(u=AU, p=AP, **over)
+def jf(method, path, token=None, check=True, **kw):
+    """Jellyfin's own API, as the admin unless another access token is given."""
+    r = requests.request(method, f"{URL}{path}", headers={"Authorization": f'MediaBrowser Token="{token or creds["JF_TOKEN"]}"'}, timeout=30, **kw)
+    if check:
+        r.raise_for_status()
+    return r
 
 
 def token(password):
@@ -67,11 +64,25 @@ def token(password):
     return {"t": hashlib.md5((password + s).encode()).hexdigest(), "s": s}
 
 
-def jf(method, path, **kw):
-    """Jellyfin's own API, as the admin."""
-    r = requests.request(method, f"{URL}{path}", headers={"Authorization": f'MediaBrowser Token="{creds["JF_TOKEN"]}"'}, timeout=30, **kw)
-    r.raise_for_status()
-    return r
+# OpenSubsonic passwords, generated as an administrator would on the plugin page
+user_ids = {u["Name"]: u["Id"] for u in jf("GET", "/Users").json()}
+GEN = {name: jf("POST", f"/opensubsonic/admin/users/{user_ids[name]}/password").json()["Password"] for name in (SU, AU)}
+
+
+def auth(**over):
+    """Token login, the way Navidrome prefers apps to sign in: md5 of the limited user's OpenSubsonic password + salt."""
+    a = {"u": SU, **token(GEN[SU]), "v": "1.16.1", "c": "conformance", "f": "json"}
+    a.update(over)
+    return {k: v for k, v in a.items() if v is not None}
+
+
+def admin(**over):
+    return auth(u=AU, **{**token(GEN[AU]), **over})
+
+
+def pw(user, password, **over):
+    """Password ("legacy") login."""
+    return auth(u=user, p=password, t=None, s=None, **over)
 
 
 def call(endpoint, params=None, auth_params=None, raw_resp=False, check_schema=True, label=None):
@@ -117,19 +128,23 @@ def err(resp):
 
 # ── envelope & auth ──────────────────────────────────────────────────────────
 r = call("ping")
-record("ping (Jellyfin username + password) ok", ok(r), r)
+record("ping (token from the OpenSubsonic password) ok", ok(r), r)
 for k in ("type", "serverVersion", "openSubsonic"):
     record(f"envelope has OpenSubsonic field '{k}'", k in (r or {}), r, "spec")
-record("ping (p=enc:hex) ok", ok(call("ping", auth_params=auth(p="enc:" + SP.encode().hex()), check_schema=False)))
-r = call("ping", auth_params=auth(u=creds["XU"], p="wrong-password"), check_schema=False, label="ping-wrongpw")
+record("ping (OpenSubsonic password as p=) ok", ok(call("ping", auth_params=pw(SU, GEN[SU]), check_schema=False, label="generated p")))
+record("ping (Jellyfin password as p=) ok", ok(call("ping", auth_params=pw(SU, SP), check_schema=False, label="jellyfin p")))
+record("ping (Jellyfin password as p=enc:hex) ok", ok(call("ping", auth_params=pw(SU, "enc:" + SP.encode().hex()), check_schema=False, label="jellyfin enc")))
+r = call("ping", auth_params=auth(**token("wrong-password")), check_schema=False, label="token-wrongpw")
+record("token from a WRONG password -> error 40", err(r) == 40, r, "spec")
+r = call("ping", auth_params=pw(creds["XU"], "wrong-password"), check_schema=False, label="ping-wrongpw")
 record("ping with a WRONG Jellyfin password -> error 40", err(r) == 40, r, "spec")
-r = call("getLicense", auth_params=auth(u="nobody", p="whatever"), check_schema=False, label="license-unknown")
+r = call("getLicense", auth_params=pw("nobody", "whatever"), check_schema=False, label="license-unknown")
 record("getLicense as an unknown user -> error 40", err(r) == 40, r, "spec")
-r = call("getAlbumList2", {"type": "newest"}, auth_params=auth(u="nobody", p="whatever"), check_schema=False, label="albums-unknown")
+r = call("getAlbumList2", {"type": "newest"}, auth_params=auth(u="nobody"), check_schema=False, label="albums-unknown")
 record("authenticated endpoint with wrong credentials -> error 40", err(r) == 40, r)
-r = call("ping", auth_params=auth(p=None, **token(SP)), label="token auth")
-record("token auth -> error 41 (Jellyfin keeps only a password hash)", err(r) == 41, r, "spec")
-r = call("ping", auth_params=auth(**token(SP)), label="p+t")
+r = call("ping", auth_params=auth(u=creds["XU"], **token(creds["XP"])), label="token without OpenSubsonic password")
+record("token login without an OpenSubsonic password -> error 41 (Jellyfin keeps only a password hash)", err(r) == 41, r, "spec")
+r = call("ping", auth_params=auth(p=SP), label="p+t")
 record("password and token together -> error 43", err(r) == 43, r, "spec")
 r = call("ping", auth_params={"apiKey": SP, "v": "1.16.1", "c": "conformance", "f": "json"}, label="apikey")
 record("apiKey -> error 42 (not offered: sign in with Jellyfin credentials)", err(r) == 42, r, "spec")
@@ -370,32 +385,65 @@ if song_ids:
 
 r = call("getAlbum", {"id": secrets.token_hex(16)}, label="error envelope")  # schema-checks a failure response
 
+# ── OpenSubsonic passwords (the plugin page's API, administrators only) ─────
+x = requests.get(f"{URL}/opensubsonic/admin/users", timeout=30)
+record("password admin API without a Jellyfin login -> 401", x.status_code == 401, x.status_code, "security")
+limited_token = requests.post(f"{URL}/Users/AuthenticateByName", json={"Username": SU, "Pw": SP}, timeout=30, headers={
+    "Authorization": 'MediaBrowser Client="conformance", Device="cli", DeviceId="conformance-limited", Version="1.0"'}).json()["AccessToken"]
+for method, path in (("GET", "users"), ("POST", f"users/{user_ids[SU]}/password"), ("DELETE", f"users/{user_ids[SU]}/password")):
+    x = jf(method, f"/opensubsonic/admin/{path}", token=limited_token, check=False)
+    record(f"password admin API as a non-admin ({method} {path.split('/')[0]}) -> 403", x.status_code == 403, x.status_code, "security")
+record("... and the limited user's password still works", ok(call("ping", label="after non-admin attempts")))
+listed = {u["Name"]: u for u in jf("GET", "/opensubsonic/admin/users").json()}
+record("the admin list shows every Jellyfin user and who has a password",
+       set(listed) == set(user_ids) and all(bool(listed[n].get("PasswordCreated")) == (n in GEN) for n in listed)
+       and listed[AU]["IsAdministrator"] and listed[creds["OU"]]["IsDisabled"], listed)
+record("the list never includes passwords", not any(g in json.dumps(list(listed.values())) for g in GEN.values())
+       and all("Password" not in u for u in listed.values()), listed, "security")
+x = jf("POST", f"/opensubsonic/admin/users/{secrets.token_hex(16)}/password", check=False)
+record("generating for an unknown user -> 404", x.status_code == 404, x.status_code)
+XU, XP = creds["XU"], creds["XP"]
+first = jf("POST", f"/opensubsonic/admin/users/{user_ids[XU]}/password")
+record("generating answers with the username and a no-store password",
+       first.json().get("Username") == XU and "no-store" in first.headers.get("cache-control", ""), (first.json().get("Username"), first.headers.get("cache-control")))
+first = first.json()["Password"]
+record("a generated password signs in by token", ok(call("ping", auth_params=auth(u=XU, **token(first)), label="extra token")))
+second = jf("POST", f"/opensubsonic/admin/users/{user_ids[XU]}/password").json()["Password"]
+r = call("ping", auth_params=auth(u=XU, **token(first)), label="regenerated: old")
+record("regenerating retires the old password at once", err(r) == 40, r, "security")
+record("... and the new one works", ok(call("ping", auth_params=auth(u=XU, **token(second)), label="regenerated: new")))
+jf("DELETE", f"/opensubsonic/admin/users/{user_ids[XU]}/password")
+r = call("ping", auth_params=auth(u=XU, **token(second)), label="removed")
+record("removing it ends token logins (error 41)", err(r) == 41, r, "security")
+offline = jf("POST", f"/opensubsonic/admin/users/{user_ids[creds['OU']]}/password").json()["Password"]
+r = call("ping", auth_params=auth(u=creds["OU"], **token(offline)), label="disabled token")
+record("a disabled account can't sign in with its OpenSubsonic password either -> error 50", err(r) == 50, r, "security")
+
 # ── Jellyfin's account rules apply ──────────────────────────────────────────
-user_ids = {u["Name"]: u["Id"] for u in jf("GET", "/Users").json()}
 def set_policy(name, **changes):
     policy = jf("GET", f"/Users/{user_ids[name]}").json()["Policy"]
     jf("POST", f"/Users/{user_ids[name]}/Policy", json={**policy, **changes})
 
-XU, XP, KU, KP = creds["XU"], creds["XP"], creds["KU"], creds["KP"]
-r = call("ping", auth_params=auth(u=creds["OU"], p=creds["OP"]), label="disabled account")
+KU, KP = creds["KU"], creds["KP"]
+r = call("ping", auth_params=pw(creds["OU"], creds["OP"]), label="disabled account")
 record("a disabled Jellyfin account -> error 50", err(r) == 50, r, "security")
-record("extra signs in", ok(call("ping", auth_params=auth(u=XU, p=XP), label="extra signs in")))
+record("extra signs in", ok(call("ping", auth_params=pw(XU, XP), label="extra signs in")))
 jf("POST", f"/Users/Password?userId={user_ids[XU]}", json={"NewPw": XP + "2"})
-r = call("ping", auth_params=auth(u=XU, p=XP), label="old password")
+r = call("ping", auth_params=pw(XU, XP), label="old password")
 record("a changed password stops working at once (not when the login cache expires)", err(r) == 40, r, "security")
-record("... and the new password works", ok(call("ping", auth_params=auth(u=XU, p=XP + "2"), label="new password")))
+record("... and the new password works", ok(call("ping", auth_params=pw(XU, XP + "2"), label="new password")))
 set_policy(XU, IsDisabled=True)
-r = call("ping", auth_params=auth(u=XU, p=XP + "2"), label="disabled while signed in")
+r = call("ping", auth_params=pw(XU, XP + "2"), label="disabled while signed in")
 record("disabling a signed-in account takes effect at once -> error 50", err(r) == 50, r, "security")
 set_policy(XU, IsDisabled=False)
 set_policy(XU, AccessSchedules=[{"DayOfWeek": "Everyday", "StartHour": 0, "EndHour": 0.5, "UserId": user_ids[XU]}])
 from datetime import datetime as _dt, timezone as _tz
 if _dt.now(_tz.utc).hour >= 1:  # allowed 00:00-00:30 server time (the container runs on UTC)
-    r = call("ping", auth_params=auth(u=XU, p=XP + "2"), label="outside schedule")
+    r = call("ping", auth_params=pw(XU, XP + "2"), label="outside schedule")
     record("outside the account's access schedule -> error 50", err(r) == 50, r, "security")
 for i in range(3):
-    call("ping", auth_params=auth(u=KU, p="wrong"), check_schema=False, label=f"lockout attempt {i + 1}")
-r = call("ping", auth_params=auth(u=KU, p=KP), label="locked out")
+    call("ping", auth_params=pw(KU, "wrong"), check_schema=False, label=f"lockout attempt {i + 1}")
+r = call("ping", auth_params=pw(KU, KP), label="locked out")
 record("Jellyfin's lockout applies: 3 wrong passwords disable the account", err(r) == 50, r, "security")
 
 # ── users & roles ───────────────────────────────────────────────────────────

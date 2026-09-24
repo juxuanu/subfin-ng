@@ -2,37 +2,61 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Subsonic Plugin Configuration</title>
+  <title>Subfin</title>
 </head>
 <body>
-  <div data-role="page" class="page type-interior withSideMenu">
+  <div id="SubfinConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
+    <style>
+      #SubfinConfigPage .subfinUser { display: flex; align-items: center; gap: .5em; padding: .6em 0; border-bottom: 1px solid rgba(128, 128, 128, .25); }
+      #SubfinConfigPage .subfinUser .subfinUserInfo { flex: 1; min-width: 0; }
+      #SubfinConfigPage .subfinUser .subfinUserStatus { opacity: .7; font-size: .9em; }
+      #SubfinConfigPage .subfinUser button { margin: 0; }
+      #SubfinConfigPage .subfinSecret { margin: .6em 0 .3em; padding: .8em 1em; border-radius: .3em; background: rgba(128, 128, 128, .15); }
+      #SubfinConfigPage .subfinSecret code, #SubfinConfigPage .subfinServer { font-size: 1.1em; user-select: all; }
+      #SubfinConfigPage .subfinSecret dl { display: grid; grid-template-columns: max-content 1fr; gap: .3em 1em; margin: .5em 0; }
+      #SubfinConfigPage .subfinSecret dd { margin: 0; overflow-wrap: anywhere; }
+    </style>
     <div data-role="content">
       <div class="content-primary">
 
-        <h2>Subsonic Plugin Settings</h2>
+        <h2 class="sectionTitle">Subfin</h2>
+        <p>
+          Subsonic apps connect to your Jellyfin address with the path <code class="subfinServer" id="subfinServerPath"></code>,
+          signing in with a Jellyfin username and that user's OpenSubsonic password, generated below. The OpenSubsonic
+          password works with token login, the way Navidrome prefers apps to sign in, and with plain password login.
+          Apps that offer plain password (&ldquo;legacy&rdquo;) login can use the Jellyfin password instead; token login
+          can't use it, because Jellyfin only stores a hash of it.
+        </p>
 
-        <form id="SubsonicConfigForm">
+        <h3 class="sectionTitle">OpenSubsonic passwords</h3>
+        <p class="fieldDescription">
+          A password is shown once, when it's generated. Regenerating or removing it signs out the apps using it.
+        </p>
+        <div id="subfinUsers"></div>
+
+        <h3 class="sectionTitle" style="margin-top: 2em;">Settings</h3>
+        <form id="SubfinConfigForm">
           <div class="inputContainer">
-            <label class="inputLabel inputLabelUnfocused" for="lastFmApiKey">Last.fm API Key</label>
-            <input id="lastFmApiKey" is="emby-input" type="password" class="emby-input" autocomplete="off" placeholder="Enter new key to change" />
+            <label class="inputLabel inputLabelUnfocused" for="lastFmApiKey">Last.fm API key</label>
+            <input id="lastFmApiKey" is="emby-input" type="password" autocomplete="off" placeholder="Enter a new key to change it" />
             <div id="lastFmApiKeyStatus" class="fieldDescription"></div>
-            <div class="fieldDescription">Used for getArtistInfo/getAlbumInfo. Leave empty to keep existing key.</div>
+            <div class="fieldDescription">Used for artist and album information (getArtistInfo, getAlbumInfo). Leave empty to keep the saved key.</div>
           </div>
 
           <div class="checkboxContainer checkboxContainer-withDescription">
             <label class="emby-checkbox-label">
-              <input id="sharingEnabled" type="checkbox" />
+              <input id="sharingEnabled" type="checkbox" is="emby-checkbox" />
               <span>Enable sharing</span>
             </label>
-            <div class="fieldDescription checkboxFieldDescription">Allow users to create shares and access share pages. Disable to block all share creation and make existing share links return 404.</div>
+            <div class="fieldDescription checkboxFieldDescription">Lets users share songs from their apps as public links. When off, apps can't create shares and existing share links stop working.</div>
           </div>
 
           <div class="checkboxContainer checkboxContainer-withDescription">
             <label class="emby-checkbox-label">
-              <input id="logRestRequests" type="checkbox" />
+              <input id="logRestRequests" type="checkbox" is="emby-checkbox" />
               <span>Log API requests</span>
             </label>
-            <div class="fieldDescription checkboxFieldDescription">Log all incoming Subsonic REST requests.</div>
+            <div class="fieldDescription checkboxFieldDescription">Logs the method and format of every Subsonic API request.</div>
           </div>
 
           <div>
@@ -42,36 +66,153 @@
           </div>
         </form>
 
-        <script type="text/javascript">
-          var pluginId = '4a3b2c1d-e5f6-7890-abcd-ef1234567890';
-
-          document.addEventListener('pagebeforeshow', function () {
-            Dashboard.showLoadingMsg();
-            ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-              document.getElementById('lastFmApiKeyStatus').textContent = config.LastFmApiKey ? 'API key is configured.' : 'No API key saved.';
-              document.getElementById('sharingEnabled').checked = config.SharingEnabled !== false;
-              document.getElementById('logRestRequests').checked = !!config.LogRestRequests;
-              Dashboard.hideLoadingMsg();
-            });
-
-            document.getElementById('SubsonicConfigForm').addEventListener('submit', function (e) {
-              e.preventDefault();
-              Dashboard.showLoadingMsg();
-              ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-                var newKey = document.getElementById('lastFmApiKey').value;
-                if (newKey) config.LastFmApiKey = newKey;
-                config.SharingEnabled = document.getElementById('sharingEnabled').checked;
-                config.LogRestRequests = document.getElementById('logRestRequests').checked;
-                ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
-                  Dashboard.processPluginConfigurationUpdateResult(result);
-                });
-              });
-            });
-          });
-        </script>
-
       </div>
     </div>
+
+    <script type="text/javascript">
+      (function () {
+        var pluginId = '4a3b2c1d-e5f6-7890-abcd-ef1234567890';
+        var page = document.querySelector('#SubfinConfigPage');
+        // Just the path (with Jellyfin's base URL, if any): apps reach Jellyfin by their own address
+        var serverPath = function () { return new URL(ApiClient.getUrl('opensubsonic'), window.location.href).pathname; };
+
+        function admin(method, path) {
+          var request = { type: method, url: ApiClient.getUrl('opensubsonic/admin/' + path) };
+          if (method !== 'DELETE') request.dataType = 'json';
+          return ApiClient.ajax(request);
+        }
+
+        function showError(message, error) {
+          if (error) console.error('[Subfin]', message, error);
+          Dashboard.hideLoadingMsg();
+          if (Dashboard.alert) Dashboard.alert({ message: message });
+          else window.alert(message);
+        }
+
+        function el(tag, className, text) {
+          var node = document.createElement(tag);
+          if (className) node.className = className;
+          if (text !== undefined) node.textContent = text;
+          return node;
+        }
+
+        function button(text, onClick) {
+          // Parsed rather than created: the web client's createElement doesn't take { is: ... }
+          var holder = document.createElement('div');
+          holder.innerHTML = '<button is="emby-button" type="button" class="raised emby-button"><span></span></button>';
+          var b = holder.firstChild;
+          b.querySelector('span').textContent = text;
+          b.addEventListener('click', onClick);
+          return b;
+        }
+
+        function status(user) {
+          var parts = [];
+          if (user.IsAdministrator) parts.push('Administrator');
+          if (user.IsDisabled) parts.push('Disabled');
+          parts.push(user.PasswordCreated
+            ? 'OpenSubsonic password generated ' + new Date(user.PasswordCreated).toLocaleString()
+            : 'No OpenSubsonic password');
+          return parts.join(' · ');
+        }
+
+        function secretBox(generated) {
+          var box = el('div', 'subfinSecret');
+          box.appendChild(el('div', null, 'Enter these in the app; the server is your Jellyfin address followed by the path. The password won’t be shown again.'));
+          var list = el('dl');
+          [['Path', serverPath()], ['Username', generated.Username], ['Password', generated.Password]].forEach(function (row) {
+            list.appendChild(el('dt', null, row[0]));
+            var value = el('dd');
+            value.appendChild(el('code', null, row[1]));
+            list.appendChild(value);
+          });
+          box.appendChild(list);
+          var copy = button('Copy password', function () {
+            var done = function () { copy.querySelector('span').textContent = 'Copied'; };
+            if (navigator.clipboard && window.isSecureContext) {
+              navigator.clipboard.writeText(generated.Password).then(done, function (e) { showError('Copy failed: select the password and copy it.', e); });
+            } else {
+              // No clipboard API over plain HTTP: select the text instead
+              var range = document.createRange();
+              range.selectNodeContents(list.querySelectorAll('code')[2]);
+              var selection = window.getSelection();
+              selection.removeAllRanges();
+              selection.addRange(range);
+              if (document.execCommand && document.execCommand('copy')) done();
+            }
+          });
+          box.appendChild(copy);
+          return box;
+        }
+
+        function renderUsers(users, generated) {
+          var container = page.querySelector('#subfinUsers');
+          container.innerHTML = '';
+          users.forEach(function (user) {
+            var row = el('div', 'subfinUser');
+            var info = el('div', 'subfinUserInfo');
+            info.appendChild(el('div', null, user.Name));
+            info.appendChild(el('div', 'subfinUserStatus', status(user)));
+            row.appendChild(info);
+            row.appendChild(button(user.PasswordCreated ? 'Regenerate' : 'Generate', function () {
+              if (user.PasswordCreated && !window.confirm('Generate a new OpenSubsonic password for ' + user.Name + '? Apps using the current one will be signed out.')) return;
+              Dashboard.showLoadingMsg();
+              admin('POST', 'users/' + user.Id + '/password')
+                .then(function (result) { return loadUsers({ userId: user.Id, result: result }); })
+                .catch(function (e) { showError('Could not generate the password.', e); });
+            }));
+            if (user.PasswordCreated) {
+              row.appendChild(button('Remove', function () {
+                if (!window.confirm('Remove the OpenSubsonic password of ' + user.Name + '? Apps using it will be signed out.')) return;
+                Dashboard.showLoadingMsg();
+                admin('DELETE', 'users/' + user.Id + '/password')
+                  .then(function () { return loadUsers(); })
+                  .catch(function (e) { showError('Could not remove the password.', e); });
+              }));
+            }
+            container.appendChild(row);
+            if (generated && generated.userId === user.Id) container.appendChild(secretBox(generated.result));
+          });
+        }
+
+        function loadUsers(generated) {
+          return admin('GET', 'users').then(function (users) {
+            renderUsers(users, generated);
+            Dashboard.hideLoadingMsg();
+          });
+        }
+
+        page.addEventListener('pageshow', function () {
+          Dashboard.showLoadingMsg();
+          page.querySelector('#subfinServerPath').textContent = serverPath();
+          Promise.all([
+            ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+              page.querySelector('#lastFmApiKeyStatus').textContent = config.LastFmApiKey ? 'A key is saved.' : 'No key saved.';
+              page.querySelector('#sharingEnabled').checked = config.SharingEnabled !== false;
+              page.querySelector('#logRestRequests').checked = !!config.LogRestRequests;
+            }),
+            loadUsers()
+          ]).then(function () { Dashboard.hideLoadingMsg(); }, function (e) { showError('Could not load the Subfin settings.', e); });
+        });
+
+        page.querySelector('#SubfinConfigForm').addEventListener('submit', function (e) {
+          e.preventDefault();
+          Dashboard.showLoadingMsg();
+          var newKey = page.querySelector('#lastFmApiKey').value;
+          ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+            if (newKey) config.LastFmApiKey = newKey;
+            config.SharingEnabled = page.querySelector('#sharingEnabled').checked;
+            config.LogRestRequests = page.querySelector('#logRestRequests').checked;
+            return ApiClient.updatePluginConfiguration(pluginId, config);
+          }).then(function (result) {
+            page.querySelector('#lastFmApiKey').value = '';
+            if (newKey) page.querySelector('#lastFmApiKeyStatus').textContent = 'A key is saved.';
+            Dashboard.processPluginConfigurationUpdateResult(result);
+          }, function (e) { showError('Could not save the settings.', e); });
+          return false;
+        });
+      })();
+    </script>
   </div>
 </body>
 </html>

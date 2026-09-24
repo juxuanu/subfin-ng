@@ -155,6 +155,62 @@ public static class SubsonicStore
         cmd.ExecuteNonQuery();
     }
 
+    // ── OpenSubsonic passwords ───────────────────────────────────────────────
+
+    /// <summary>The user's OpenSubsonic password, or null if none was generated.</summary>
+    public static string? GetSubsonicPassword(string userId)
+    {
+        lock (_lock)
+        {
+            using var cmd = Db.CreateCommand();
+            cmd.CommandText = "SELECT password_encrypted FROM subsonic_passwords WHERE user_id = @u";
+            cmd.Parameters.AddWithValue("@u", userId);
+            if (cmd.ExecuteScalar() is not byte[] blob) return null;
+            try { return Crypto.Decrypt(blob, _salt); }
+            catch { return null; }
+        }
+    }
+
+    /// <summary>When each user's OpenSubsonic password was generated (UTC, SQLite format), by user id.</summary>
+    public static Dictionary<string, string> GetSubsonicPasswordDates()
+    {
+        lock (_lock)
+        {
+            using var cmd = Db.CreateCommand();
+            cmd.CommandText = "SELECT user_id, created_at FROM subsonic_passwords";
+            using var reader = cmd.ExecuteReader();
+            var dates = new Dictionary<string, string>();
+            while (reader.Read()) dates[reader.GetString(0)] = reader.GetString(1);
+            return dates;
+        }
+    }
+
+    public static void SetSubsonicPassword(string userId, string password)
+    {
+        var encrypted = Crypto.Encrypt(password, _salt);
+        lock (_lock)
+        {
+            using var cmd = Db.CreateCommand();
+            cmd.CommandText = @"
+                INSERT INTO subsonic_passwords (user_id, password_encrypted, created_at) VALUES (@u, @p, datetime('now'))
+                ON CONFLICT(user_id) DO UPDATE SET password_encrypted = @p, created_at = datetime('now')";
+            cmd.Parameters.AddWithValue("@u", userId);
+            cmd.Parameters.AddWithValue("@p", encrypted);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    public static void DeleteSubsonicPassword(string userId)
+    {
+        lock (_lock)
+        {
+            using var cmd = Db.CreateCommand();
+            cmd.CommandText = "DELETE FROM subsonic_passwords WHERE user_id = @u";
+            cmd.Parameters.AddWithValue("@u", userId);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
     // ── Play Queue ───────────────────────────────────────────────────────────
 
     public static PlayQueueRecord? GetPlayQueue(string userId)

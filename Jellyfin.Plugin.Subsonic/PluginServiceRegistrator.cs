@@ -13,8 +13,8 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
     public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
         serviceCollection.AddSingleton<SubsonicAuth>();
-        serviceCollection.AddScoped<IEventConsumer<UserPasswordChangedEventArgs>, LoginCacheInvalidator>();
-        serviceCollection.AddScoped<IEventConsumer<UserUpdatedEventArgs>, LoginCacheInvalidator>();
-        serviceCollection.AddScoped<IEventConsumer<UserDeletedEventArgs>, LoginCacheInvalidator>();
+        serviceCollection.AddScoped<IEventConsumer<UserPasswordChangedEventArgs>, UserEventConsumer>();
+        serviceCollection.AddScoped<IEventConsumer<UserUpdatedEventArgs>, UserEventConsumer>();
+        serviceCollection.AddScoped<IEventConsumer<UserDeletedEventArgs>, UserEventConsumer>();
     }
 }
