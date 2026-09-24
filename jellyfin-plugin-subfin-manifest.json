@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/juxuanu/subfin-plugin/main/logo.png",
     "versions": [
       {
+        "version": "12.1.9.0",
+        "changelog": "- feat: startScan runs Jellyfin's library scan, getScanStatus reports it",
+        "targetAbi": "12.1.0.0",
+        "sourceUrl": "https://github.com/juxuanu/subfin-plugin/releases/download/v12.1.9.0/jellyfin-plugin-subfin_12.1.9.0.zip",
+        "checksum": "c34e43ad72c9293e947666fe562a3165",
+        "timestamp": "2026-09-24T21:54:39Z"
+      },
+      {
         "version": "12.1.8.9",
         "changelog": "- fix: starred artists carry their album count and cover, as in getArtists",
         "targetAbi": "12.1.0.0",
