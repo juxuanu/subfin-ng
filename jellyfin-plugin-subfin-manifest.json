@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/juxuanu/subfin-plugin/main/logo.png",
     "versions": [
       {
+        "version": "12.1.8.7",
+        "changelog": "- fix: starred artists, the play queue's date and cache times\n- address CI warnings",
+        "targetAbi": "12.1.0.0",
+        "sourceUrl": "https://github.com/juxuanu/subfin-plugin/releases/download/v12.1.8.7/jellyfin-plugin-subfin_12.1.8.7.zip",
+        "checksum": "7a894f9a8ec8c16f85be05f5dc5b403a",
+        "timestamp": "2026-09-24T16:56:26Z"
+      },
+      {
         "version": "12.1.8.6",
         "changelog": "- fix CI failures",
         "targetAbi": "12.1.0.0",
