@@ -1,0 +1,61 @@
+name: Test
+
+# Unit tests and the OpenSubsonic conformance suite (tests/conformance: the plugin in a real Jellyfin,
+# run with podman). Runs on pushes to main and on pull requests; the release workflow runs it too and
+# only publishes when it passes.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Test
+        run: dotnet test Jellyfin.Plugin.Subsonic.Tests --nologo
+
+  conformance:
+    name: Conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install podman and ffmpeg
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends podman ffmpeg
+
+      - name: Conformance suite
+        run: tests/conformance/run.sh
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-report
+          path: tests/conformance/.work/report.json
+          if-no-files-found: ignore

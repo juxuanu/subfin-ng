@@ -3,6 +3,7 @@ name: Release
 # Push a tag like v12.1.7.0 (scripts/release.sh does it) to build the plugin, publish it as a GitHub
 # release and add it to the plugin repository manifest on main, which Jellyfin reads from
 # https://raw.githubusercontent.com/<owner>/<repo>/main/jellyfin-plugin-subfin-manifest.json
+# Nothing is published unless the tests (test.yml: unit tests and the conformance suite) pass.
 on:
   push:
     tags:
@@ -21,7 +22,13 @@ env:
   PUBLISH_DIR: Jellyfin.Plugin.Subsonic/bin/Release/net10.0/publish
 
 jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+    permissions:
+      contents: read
+
   release:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -46,9 +53,6 @@ jobs:
             echo "::error::tag $GITHUB_REF_NAME doesn't match meta.json version $META_VERSION (use scripts/release.sh)"; exit 1
           fi
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Test
-        run: dotnet test Jellyfin.Plugin.Subsonic.Tests --nologo
 
       - name: Build
         run: dotnet publish -c Release Jellyfin.Plugin.Subsonic --nologo
