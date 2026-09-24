@@ -294,6 +294,19 @@ if song_ids and "Album One" in albums:
     record("getStarred2 shows starred song and album", len(st.get("song", [])) == 1 and len(st.get("album", [])) == 1,
            (len(st.get("song", [])), len(st.get("album", []))))
     call("getStarred")
+    # An album with the user's own data (starred, rated): those fields come after its song list
+    call("setRating", {"id": albums["Album One"]["id"], "rating": 3}, check_schema=False, label="rate album")
+    r = call("getAlbum", {"id": albums["Album One"]["id"]}, label="getAlbum starred+rated")
+    a = (r or {}).get("album", {})
+    record("getAlbum of a starred, rated album (JSON)", ok(r) and a.get("starred") and a.get("userRating") == 3 and len(a.get("song", [])) == 3, r)
+    x = requests.get(f"{API}/getAlbum", params={**auth(f="xml"), "id": albums["Album One"]["id"]}, timeout=30)
+    try:
+        el = ET.fromstring(x.content).find("{http://subsonic.org/restapi}album")
+        got = (el.get("starred") is not None, el.get("userRating"), len(el.findall("{http://subsonic.org/restapi}song")))
+    except (ET.ParseError, AttributeError) as e:
+        got = (x.status_code, x.text[:200], repr(e))
+    record("getAlbum of a starred, rated album (XML)", got == (True, "3", 3), got)
+    call("setRating", {"id": albums["Album One"]["id"], "rating": 0}, check_schema=False, label="unrate album")
     record("unstar", ok(call("unstar", [("id", song_ids[0]), ("albumId", albums["Album One"]["id"])])))
     record("setRating 4", ok(call("setRating", {"id": song_ids[0], "rating": 4})))
     r = call("getSong", {"id": song_ids[0]}, check_schema=False)

@@ -232,7 +232,7 @@ public class SubsonicController : ControllerBase
             "download" => Download(auth, user, p, format),
             "getcoverart" => GetCoverArt(p, format),
             "getavatar" => GetAvatar(user, p, format),
-            _ => Respond(format, SubsonicEnvelope.Error(ErrorCode.NotFound, $"Unknown method: {method}"), XmlBuilder.ErrorEnvelope(ErrorCode.NotFound, $"Unknown method: {method}"))
+            _ => ErrorResponse(format, ErrorCode.NotFound, $"Unknown method: {method}")
         };
     }
 
@@ -248,18 +248,19 @@ public class SubsonicController : ControllerBase
 
     // ── Response helper ──────────────────────────────────────────────────────
 
-    private IActionResult Respond(string format, JsonObject json, string? xml = null)
+    /// <summary>Answers in the requested format; the XML is only built when it's asked for.</summary>
+    private IActionResult Respond(string format, JsonObject json, Func<string>? xml = null)
     {
         if (format == "json")
             return new ContentResult { Content = json.ToJsonString(), ContentType = "application/json; charset=utf-8", StatusCode = 200 };
-        return new ContentResult { Content = xml ?? XmlBuilder.ErrorEnvelope(0, "XML not implemented"), ContentType = "text/xml; charset=utf-8", StatusCode = 200 };
+        return new ContentResult { Content = xml?.Invoke() ?? XmlBuilder.ErrorEnvelope(0, "XML not implemented"), ContentType = "text/xml; charset=utf-8", StatusCode = 200 };
     }
 
     private IActionResult Respond(string format, (JsonObject Json, string Xml) tuple) =>
-        Respond(format, tuple.Json, tuple.Xml);
+        Respond(format, tuple.Json, () => tuple.Xml);
 
     private IActionResult ErrorResponse(string format, int code, string message) =>
-        Respond(format, SubsonicEnvelope.Error(code, message), XmlBuilder.ErrorEnvelope(code, message));
+        Respond(format, SubsonicEnvelope.Error(code, message), () => XmlBuilder.ErrorEnvelope(code, message));
 
     // ── getMusicFolders ──────────────────────────────────────────────────────
 
@@ -273,7 +274,7 @@ public class SubsonicController : ControllerBase
                 ["musicFolder"] = musicFolders.Select(f => new Dictionary<string, object> { ["id"] = FolderIdToInt(f.ItemId), ["name"] = f.Item2 }).ToList()
             }
         });
-        return Respond(format, json, XmlBuilder.MusicFolders(musicFolders.Select(f => (FolderIdToInt(f.ItemId).ToString(CultureInfo.InvariantCulture), f.Name)).ToList()));  // same int ids as JSON
+        return Respond(format, json, () => XmlBuilder.MusicFolders(musicFolders.Select(f => (FolderIdToInt(f.ItemId).ToString(CultureInfo.InvariantCulture), f.Name)).ToList()));  // same int ids as JSON
     }
 
     // ── getArtists / getIndexes ──────────────────────────────────────────────
@@ -282,7 +283,7 @@ public class SubsonicController : ControllerBase
     {
         var index = BuildArtistIndex(auth, user, p.MusicFolderId);
         var json = SubsonicEnvelope.Ok(new() { ["artists"] = BuildArtistsJson(index) });
-        return Respond(format, json, XmlBuilder.Artists(index));
+        return Respond(format, json, () => XmlBuilder.Artists(index));
     }
 
     private IActionResult GetIndexes(AuthResult auth, User user, QueryParams p, string format)
@@ -293,7 +294,7 @@ public class SubsonicController : ControllerBase
         var indexes = BuildArtistsJson(index);
         indexes["lastModified"] = lastModified;
         var json = SubsonicEnvelope.Ok(new() { ["indexes"] = indexes });
-        return Respond(format, json, XmlBuilder.Indexes(index, lastModified: lastModified));
+        return Respond(format, json, () => XmlBuilder.Indexes(index, lastModified: lastModified));
     }
 
     private List<(string Letter, List<(string Id, string Name, int AlbumCount)> Artists)> BuildArtistIndex(
@@ -416,7 +417,7 @@ public class SubsonicController : ControllerBase
         var artistId = $"ar-{artist.Id:N}";
         var mapped = ItemMapper.ToArtistWithAlbums(artist, albums, a => ItemMapper.ToAlbumShort(a, artistId, UserDataFor(a), StarredAt(a)));
         var json = SubsonicEnvelope.Ok(new() { ["artist"] = mapped });
-        return Respond(format, json, XmlBuilder.Artist(mapped));
+        return Respond(format, json, () => XmlBuilder.Artist(mapped));
     }
 
     // ── getAlbum ─────────────────────────────────────────────────────────────
@@ -434,7 +435,7 @@ public class SubsonicController : ControllerBase
         var resolvedArtistId = ResolveArtistTagId(album.AlbumArtist ?? album.AlbumArtists.FirstOrDefault());
         var mapped = ItemMapper.ToAlbum(album, songs, s => ToAlbumSong(s, album), resolvedArtistId, UserDataFor(album));
         var json = SubsonicEnvelope.Ok(new() { ["album"] = mapped });
-        return Respond(format, json, XmlBuilder.Album(mapped));
+        return Respond(format, json, () => XmlBuilder.Album(mapped));
     }
 
     // ── getSong ──────────────────────────────────────────────────────────────
@@ -449,7 +450,7 @@ public class SubsonicController : ControllerBase
 
         var mapped = ToSongWithArtist(song);
         var json = SubsonicEnvelope.Ok(new() { ["song"] = mapped });
-        return Respond(format, json, XmlBuilder.Song(mapped));
+        return Respond(format, json, () => XmlBuilder.Song(mapped));
     }
 
     // ── getMusicDirectory ────────────────────────────────────────────────────
@@ -525,7 +526,7 @@ public class SubsonicController : ControllerBase
                 ["child"] = childMaps,
             }
         });
-        return Respond(format, json, XmlBuilder.MusicDirectory(guid.ToString("N"), item.Name ?? "", parentId, childMaps));
+        return Respond(format, json, () => XmlBuilder.MusicDirectory(guid.ToString("N"), item.Name ?? "", parentId, childMaps));
     }
 
     // ── search3 ──────────────────────────────────────────────────────────────
@@ -586,7 +587,7 @@ public class SubsonicController : ControllerBase
                 ["song"] = songs,
             }
         });
-        return Respond(format, json, XmlBuilder.SearchResult3(artists, albums, songs, element));
+        return Respond(format, json, () => XmlBuilder.SearchResult3(artists, albums, songs, element));
     }
 
     // ── getAlbumList / getAlbumList2 ─────────────────────────────────────────
@@ -618,7 +619,7 @@ public class SubsonicController : ControllerBase
                 .ToList();
 
             var recentJson = SubsonicEnvelope.Ok(new() { [v2 ? "albumList2" : "albumList"] = new Dictionary<string, object> { ["album"] = recentAlbums } });
-            return Respond(format, recentJson, XmlBuilder.AlbumList(recentAlbums, v2));
+            return Respond(format, recentJson, () => XmlBuilder.AlbumList(recentAlbums, v2));
         }
 
         var (sortBy, sortOrder) = type switch
@@ -660,7 +661,7 @@ public class SubsonicController : ControllerBase
 
         var albums = _library.GetItemList(query).OfType<MusicAlbum>().Select(ToAlbumWithArtist).ToList();
         var json = SubsonicEnvelope.Ok(new() { [v2 ? "albumList2" : "albumList"] = new Dictionary<string, object> { ["album"] = albums } });
-        return Respond(format, json, XmlBuilder.AlbumList(albums, v2));
+        return Respond(format, json, () => XmlBuilder.AlbumList(albums, v2));
     }
 
     // ── getRandomSongs ───────────────────────────────────────────────────────
@@ -682,7 +683,7 @@ public class SubsonicController : ControllerBase
         var songs = _library.GetItemList(query).OfType<Audio>().Select(ToSongWithArtist).ToList();
 
         var json = SubsonicEnvelope.Ok(new() { ["randomSongs"] = new Dictionary<string, object> { ["song"] = songs } });
-        return Respond(format, json, XmlBuilder.RandomSongs(songs));
+        return Respond(format, json, () => XmlBuilder.RandomSongs(songs));
     }
 
     // ── getGenres ────────────────────────────────────────────────────────────
@@ -742,7 +743,7 @@ public class SubsonicController : ControllerBase
                 ["genre"] = genres.Select(g => new Dictionary<string, object> { ["value"] = g.Name, ["songCount"] = g.SongCount, ["albumCount"] = g.AlbumCount }).ToList()
             }
         });
-        return Respond(format, jsonObj, XmlBuilder.Genres(genres));
+        return Respond(format, jsonObj, () => XmlBuilder.Genres(genres));
     }
 
     // ── getSongsByGenre ──────────────────────────────────────────────────────
@@ -765,7 +766,7 @@ public class SubsonicController : ControllerBase
         var songs = _library.GetItemList(query).OfType<Audio>().Select(ToSongWithArtist).ToList();
 
         var json = SubsonicEnvelope.Ok(new() { ["songsByGenre"] = new Dictionary<string, object> { ["song"] = songs } });
-        return Respond(format, json, XmlBuilder.SongsByGenre(songs));
+        return Respond(format, json, () => XmlBuilder.SongsByGenre(songs));
     }
 
     // ── Playlists ────────────────────────────────────────────────────────────
@@ -779,7 +780,7 @@ public class SubsonicController : ControllerBase
             .Select(pl => MapPlaylist(pl, user, false)).ToList();
 
         var json = SubsonicEnvelope.Ok(new() { ["playlists"] = new Dictionary<string, object> { ["playlist"] = playlists } });
-        return Respond(format, json, XmlBuilder.Playlists(playlists));
+        return Respond(format, json, () => XmlBuilder.Playlists(playlists));
     }
 
     private IActionResult GetPlaylist(User user, QueryParams p, string format)
@@ -791,7 +792,7 @@ public class SubsonicController : ControllerBase
 
         var mapped = MapPlaylist(pl, user, true);
         var json = SubsonicEnvelope.Ok(new() { ["playlist"] = mapped });
-        return Respond(format, json, XmlBuilder.Playlist(mapped));
+        return Respond(format, json, () => XmlBuilder.Playlist(mapped));
     }
 
     private Playlist? GetVisiblePlaylist(User user, Guid id) =>
@@ -877,7 +878,7 @@ public class SubsonicController : ControllerBase
 
         var mapped = MapPlaylist(pl, user, true);
         var json = SubsonicEnvelope.Ok(new() { ["playlist"] = mapped });
-        return Respond(format, json, XmlBuilder.Playlist(mapped));
+        return Respond(format, json, () => XmlBuilder.Playlist(mapped));
     }
 
     private async Task<IActionResult> UpdatePlaylist(User user, QueryParams p, string format)
@@ -913,7 +914,7 @@ public class SubsonicController : ControllerBase
         kept.AddRange(added.Select(LinkedChild.Create));
 
         await SavePlaylistAsync(pl, kept, added: added.Count > 0);
-        return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
+        return Respond(format, SubsonicEnvelope.Ok(), () => XmlBuilder.Ping());
     }
 
     private IActionResult DeletePlaylist(User user, QueryParams p, string format)
@@ -926,7 +927,7 @@ public class SubsonicController : ControllerBase
             return ErrorResponse(format, ErrorCode.NotAuthorized, "Only the owner can delete a playlist.");
 
         _library.DeleteItem(pl, new MediaBrowser.Controller.Library.DeleteOptions { DeleteFileLocation = true });
-        return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
+        return Respond(format, SubsonicEnvelope.Ok(), () => XmlBuilder.Ping());
     }
 
     /// <summary>
@@ -965,7 +966,7 @@ public class SubsonicController : ControllerBase
             _userData.SaveUserData(user, item, data, UserDataSaveReason.UpdateUserRating, CancellationToken.None);
             SubsonicStore.SetStarred(user.Id.ToString("N"), item.Id.ToString("N"), star);
         }
-        return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
+        return Respond(format, SubsonicEnvelope.Ok(), () => XmlBuilder.Ping());
     }
 
     // ── setRating ────────────────────────────────────────────────────────────
@@ -975,16 +976,16 @@ public class SubsonicController : ControllerBase
         var id = p.Id;
         var rating = p.GetInt("rating", 0);
         if (string.IsNullOrEmpty(id)) return ErrorResponse(format, ErrorCode.RequiredParameterMissing, "Missing id");
-        if (!Guid.TryParse(ItemMapper.StripPrefix(id), out var guid)) return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
+        if (!Guid.TryParse(ItemMapper.StripPrefix(id), out var guid)) return Respond(format, SubsonicEnvelope.Ok(), () => XmlBuilder.Ping());
 
         var item = GetVisibleItem(guid);
-        if (item == null) return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
+        if (item == null) return Respond(format, SubsonicEnvelope.Ok(), () => XmlBuilder.Ping());
 
         var data = _userData.GetUserData(user, item);
-        if (data == null) return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
+        if (data == null) return Respond(format, SubsonicEnvelope.Ok(), () => XmlBuilder.Ping());
         data.Rating = rating > 0 ? rating : null;
         _userData.SaveUserData(user, item, data, UserDataSaveReason.UpdateUserRating, CancellationToken.None);
-        return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
+        return Respond(format, SubsonicEnvelope.Ok(), () => XmlBuilder.Ping());
     }
 
     // ── scrobble ─────────────────────────────────────────────────────────────
@@ -1013,7 +1014,7 @@ public class SubsonicController : ControllerBase
                 await ReportPlaybackAsync(auth, user, item, isSubmission);
         }
 
-        return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
+        return Respond(format, SubsonicEnvelope.Ok(), () => XmlBuilder.Ping());
     }
 
     // Plays submitted this long after they happened (offline clients) are recorded as history
@@ -1130,7 +1131,7 @@ public class SubsonicController : ControllerBase
                 }).ToList()
             }
         });
-        return Respond(format, json, XmlBuilder.NowPlaying(entries));
+        return Respond(format, json, () => XmlBuilder.NowPlaying(entries));
     }
 
     /// <summary>Subsonic player ids are integers; Jellyfin session ids are strings. Stable per session.</summary>
@@ -1145,7 +1146,7 @@ public class SubsonicController : ControllerBase
         var current = p.Get("current");
         var position = p.GetLong("position", 0);
         SubsonicStore.SavePlayQueue(user.Id.ToString("N"), ids, current, 0, position, p.Get("c") ?? "");
-        return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
+        return Respond(format, SubsonicEnvelope.Ok(), () => XmlBuilder.Ping());
     }
 
     private IActionResult GetPlayQueue(User user, string format)
@@ -1157,7 +1158,7 @@ public class SubsonicController : ControllerBase
             var never = DateTimeOffset.UnixEpoch.ToString("o");
             return Respond(format,
                 SubsonicEnvelope.Ok(new() { ["playQueue"] = new Dictionary<string, object> { ["username"] = user.Username, ["changed"] = never, ["changedBy"] = "" } }),
-                XmlBuilder.PlayQueue(null, 0, 0, never, "", [], user.Username));
+                () => XmlBuilder.PlayQueue(null, 0, 0, never, "", [], user.Username));
         }
 
         var songs = pq.EntryIds.Select(id =>
@@ -1179,7 +1180,7 @@ public class SubsonicController : ControllerBase
                 ["entry"] = songs,
             }
         });
-        return Respond(format, json, XmlBuilder.PlayQueue(pq.CurrentId, pq.CurrentIndex, pq.PositionMs, pq.ChangedAt, pq.ChangedBy, songs, user.Username));
+        return Respond(format, json, () => XmlBuilder.PlayQueue(pq.CurrentId, pq.CurrentIndex, pq.PositionMs, pq.ChangedAt, pq.ChangedBy, songs, user.Username));
     }
 
     // ── Shares ───────────────────────────────────────────────────────────────
@@ -1190,7 +1191,7 @@ public class SubsonicController : ControllerBase
         var baseUrl = $"{Request.Scheme}://{Request.Host}{Request.PathBase}";  // PathBase = Jellyfin base URL
         var xmlShares = shares.Select(s => BuildShareXml(s, baseUrl, user)).ToList();
         var json = SubsonicEnvelope.Ok(new() { ["shares"] = new Dictionary<string, object> { ["share"] = xmlShares.Select(ShareToJson).ToList() } });
-        return Respond(format, json, XmlBuilder.Shares(xmlShares));
+        return Respond(format, json, () => XmlBuilder.Shares(xmlShares));
     }
 
     private IActionResult CreateShare(User user, QueryParams p, string format)
@@ -1215,7 +1216,7 @@ public class SubsonicController : ControllerBase
         var baseUrl = $"{Request.Scheme}://{Request.Host}{Request.PathBase}";  // PathBase = Jellyfin base URL
         var xmlShare = BuildShareXml(share, baseUrl, user);
         var json = SubsonicEnvelope.Ok(new() { ["shares"] = new Dictionary<string, object> { ["share"] = new[] { ShareToJson(xmlShare) } } });
-        return Respond(format, json, XmlBuilder.ShareCreated(xmlShare));
+        return Respond(format, json, () => XmlBuilder.ShareCreated(xmlShare));
     }
 
     /// <summary>Only the user who created a share may change or delete it.</summary>
@@ -1233,7 +1234,7 @@ public class SubsonicController : ControllerBase
         if (!string.IsNullOrEmpty(expiresParam) && long.TryParse(expiresParam, out var ms) && ms > 0)
             expiresAt = DateTimeOffset.FromUnixTimeMilliseconds(ms).ToString("o");
         SubsonicStore.UpdateShare(id, desc, expiresAt);
-        return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
+        return Respond(format, SubsonicEnvelope.Ok(), () => XmlBuilder.Ping());
     }
 
     private IActionResult DeleteShare(User user, QueryParams p, string format)
@@ -1242,7 +1243,7 @@ public class SubsonicController : ControllerBase
         if (string.IsNullOrEmpty(id)) return ErrorResponse(format, ErrorCode.RequiredParameterMissing, "Missing id");
         if (!OwnsShare(user, id)) return ErrorResponse(format, ErrorCode.NotFound, "Share not found");
         SubsonicStore.DeleteShare(id);
-        return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping());
+        return Respond(format, SubsonicEnvelope.Ok(), () => XmlBuilder.Ping());
     }
 
     private ShareXml BuildShareXml(ShareRecord s, string baseUrl, User user)
@@ -1296,7 +1297,7 @@ public class SubsonicController : ControllerBase
         {
             [v2 ? "starred2" : "starred"] = new Dictionary<string, object> { ["artist"] = artists, ["album"] = albums, ["song"] = songs }
         });
-        return Respond(format, json, XmlBuilder.Starred(artists, albums, songs, v2));
+        return Respond(format, json, () => XmlBuilder.Starred(artists, albums, songs, v2));
     }
 
     // ── getUser / getUsers ───────────────────────────────────────────────────
@@ -1316,7 +1317,7 @@ public class SubsonicController : ControllerBase
         }
 
         var mapped = MapUser(target);
-        return Respond(format, SubsonicEnvelope.Ok(new() { ["user"] = mapped }), XmlBuilder.User(mapped));
+        return Respond(format, SubsonicEnvelope.Ok(new() { ["user"] = mapped }), () => XmlBuilder.User(mapped));
     }
 
     private IActionResult GetUsers(User user, string format)
@@ -1325,7 +1326,7 @@ public class SubsonicController : ControllerBase
             return ErrorResponse(format, ErrorCode.NotAuthorized, "Only administrators can list users.");
 
         var users = _userManager.GetUsers().Select(MapUser).ToList();
-        return Respond(format, SubsonicEnvelope.Ok(new() { ["users"] = new Dictionary<string, object> { ["user"] = users } }), XmlBuilder.Users(users));
+        return Respond(format, SubsonicEnvelope.Ok(new() { ["users"] = new Dictionary<string, object> { ["user"] = users } }), () => XmlBuilder.Users(users));
     }
 
     private Dictionary<string, object> MapUser(User u) => new()
@@ -1354,7 +1355,7 @@ public class SubsonicController : ControllerBase
     {
         var json = SubsonicEnvelope.Ok(new()
         { ["scanStatus"] = new Dictionary<string, object> { ["scanning"] = false, ["count"] = 0 } });
-        return Respond(format, json, XmlBuilder.ScanStatus());
+        return Respond(format, json, () => XmlBuilder.ScanStatus());
     }
 
     // ── getArtistInfo / getArtistInfo2 ───────────────────────────────────────
@@ -1406,7 +1407,7 @@ public class SubsonicController : ControllerBase
         if (mbidResult != null) jsonInfo["musicBrainzId"] = mbidResult;
         if (url != null) jsonInfo["lastFmUrl"] = url;
         var json = SubsonicEnvelope.Ok(new() { [jsonKey] = jsonInfo });
-        return Respond(format, json, XmlBuilder.ArtistInfo(bio, mbidResult, url, artistImageUrl, similarArtistDicts, v2));
+        return Respond(format, json, () => XmlBuilder.ArtistInfo(bio, mbidResult, url, artistImageUrl, similarArtistDicts, v2));
     }
 
     // ── getAlbumInfo / getAlbumInfo2 ─────────────────────────────────────────
@@ -1433,7 +1434,7 @@ public class SubsonicController : ControllerBase
         if (mbidResult != null) jsonInfo["musicBrainzId"] = mbidResult;
         if (url != null) jsonInfo["lastFmUrl"] = url;
         var json = SubsonicEnvelope.Ok(new() { [jsonKey] = jsonInfo });
-        return Respond(format, json, XmlBuilder.AlbumInfo(notes, mbidResult, url, v2));
+        return Respond(format, json, () => XmlBuilder.AlbumInfo(notes, mbidResult, url, v2));
     }
 
     // ── getSimilarSongs / getSimilarSongs2 ───────────────────────────────────
@@ -1457,7 +1458,7 @@ public class SubsonicController : ControllerBase
         var songs = results.Take(count).OfType<Audio>().Select(ToSongWithArtist).ToList();
         var jsonKey = v2 ? "similarSongs2" : "similarSongs";
         var json = SubsonicEnvelope.Ok(new() { [jsonKey] = new Dictionary<string, object> { ["song"] = songs } });
-        return Respond(format, json, XmlBuilder.SimilarSongs(songs, v2));
+        return Respond(format, json, () => XmlBuilder.SimilarSongs(songs, v2));
     }
 
     // ── getTopSongs ──────────────────────────────────────────────────────────
@@ -1466,12 +1467,12 @@ public class SubsonicController : ControllerBase
     {
         var artistName = p.Get("artist");
         if (string.IsNullOrEmpty(artistName))
-            return Respond(format, SubsonicEnvelope.Ok(new() { ["topSongs"] = new Dictionary<string, object> { ["song"] = new List<object>() } }), XmlBuilder.TopSongs([]));
+            return Respond(format, SubsonicEnvelope.Ok(new() { ["topSongs"] = new Dictionary<string, object> { ["song"] = new List<object>() } }), () => XmlBuilder.TopSongs([]));
 
         var count = p.GetInt("count", 50);
         var tagArtist = _library.GetArtist(artistName);
         if (tagArtist == null)
-            return Respond(format, SubsonicEnvelope.Ok(new() { ["topSongs"] = new Dictionary<string, object> { ["song"] = new List<object>() } }), XmlBuilder.TopSongs([]));
+            return Respond(format, SubsonicEnvelope.Ok(new() { ["topSongs"] = new Dictionary<string, object> { ["song"] = new List<object>() } }), () => XmlBuilder.TopSongs([]));
 
         var songs = _library.GetItemList(new InternalItemsQuery(user)
         {
@@ -1483,7 +1484,7 @@ public class SubsonicController : ControllerBase
         }).OfType<Audio>().Select(ToSongWithArtist).ToList();
 
         var json = SubsonicEnvelope.Ok(new() { ["topSongs"] = new Dictionary<string, object> { ["song"] = songs } });
-        return Respond(format, json, XmlBuilder.TopSongs(songs));
+        return Respond(format, json, () => XmlBuilder.TopSongs(songs));
     }
 
     // ── Last.fm helpers ──────────────────────────────────────────────────────
@@ -1628,7 +1629,7 @@ public class SubsonicController : ControllerBase
             }
         });
 
-        return Respond(format, json, XmlBuilder.OkEnvelope(w =>
+        return Respond(format, json, () => XmlBuilder.OkEnvelope(w =>
         {
             w.WriteStartElement("lyrics", "http://subsonic.org/restapi");
             w.WriteAttributeString("artist", resolvedArtist);
@@ -1685,7 +1686,7 @@ public class SubsonicController : ControllerBase
             ["lyricsList"] = new Dictionary<string, object> { ["structuredLyrics"] = structuredLyrics }
         });
 
-        return Respond(format, json, XmlBuilder.OkEnvelope(w =>
+        return Respond(format, json, () => XmlBuilder.OkEnvelope(w =>
         {
             w.WriteStartElement("lyricsList", "http://subsonic.org/restapi");
             foreach (var entry in structuredLyrics.Cast<Dictionary<string, object>>())

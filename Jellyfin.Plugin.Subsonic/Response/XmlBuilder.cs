@@ -218,19 +218,7 @@ public static class XmlBuilder
     public static string Artist(Dictionary<string, object?> artist) => OkEnvelope(w =>
     {
         w.WriteStartElement("artist", Ns);
-        foreach (var kv in artist)
-        {
-            if (kv.Key == "album" && kv.Value is List<Dictionary<string, object?>> albums)
-            {
-                foreach (var album in albums)
-                {
-                    w.WriteStartElement("album", Ns);
-                    WriteAlbumID3Attrs(w, album);
-                    w.WriteEndElement();
-                }
-            }
-            else WriteAttr(w, kv.Key, kv.Value);
-        }
+        WriteAttrsThenChildren(w, artist, "album", WriteAlbumID3Attrs);
         w.WriteEndElement();
     });
 
@@ -239,21 +227,30 @@ public static class XmlBuilder
     public static string Album(Dictionary<string, object?> album) => OkEnvelope(w =>
     {
         w.WriteStartElement("album", Ns);
-        foreach (var kv in album)
-        {
-            if (kv.Key == "song" && kv.Value is List<Dictionary<string, object?>> songs)
-            {
-                foreach (var song in songs)
-                {
-                    w.WriteStartElement("song", Ns);
-                    WriteSongAttrs(w, song);
-                    w.WriteEndElement();
-                }
-            }
-            else WriteAttr(w, kv.Key, kv.Value);
-        }
+        WriteAttrsThenChildren(w, album, "song", WriteSongAttrs);
         w.WriteEndElement();
     });
+
+    /// <summary>
+    /// Writes an element's attributes, then its <paramref name="childKey"/> list as child elements. XML
+    /// allows no attribute after the first child, and fields such as a user's starred or played date
+    /// come after the list in the dictionary.
+    /// </summary>
+    private static void WriteAttrsThenChildren(XmlWriter w, Dictionary<string, object?> d, string childKey,
+        Action<XmlWriter, Dictionary<string, object?>> writeChild)
+    {
+        foreach (var kv in d)
+            if (kv.Value is not List<Dictionary<string, object?>>) WriteAttr(w, kv.Key, kv.Value);
+        if (d.TryGetValue(childKey, out var value) && value is List<Dictionary<string, object?>> children)
+        {
+            foreach (var child in children)
+            {
+                w.WriteStartElement(childKey, Ns);
+                writeChild(w, child);
+                w.WriteEndElement();
+            }
+        }
+    }
 
     // ── Song ─────────────────────────────────────────────────────────────────
 

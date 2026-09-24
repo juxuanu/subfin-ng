@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Xml;
 using Jellyfin.Plugin.Subsonic.Response;
 using Xunit;
@@ -12,6 +13,37 @@ public class XmlBuilderTests
         var doc = new XmlDocument();
         doc.LoadXml(xml);
         return doc;
+    }
+
+    [Fact]
+    public void Album_WritesUserFieldsAfterTheSongList_AsAttributes()
+    {
+        // The mapper adds a user's starred/played/rating after "song"; XML allows no attribute after a child
+        var album = new Dictionary<string, object?>
+        {
+            ["id"] = "al1", ["name"] = "Album",
+            ["song"] = new List<Dictionary<string, object?>> { new() { ["id"] = "s1", ["title"] = "One" }, new() { ["id"] = "s2", ["title"] = "Two" } },
+            ["starred"] = "2026-09-24T00:00:00Z", ["played"] = "2026-09-23T00:00:00Z", ["userRating"] = 4,
+        };
+        var el = Parse(XmlBuilder.Album(album)).DocumentElement!["album", "http://subsonic.org/restapi"]!;
+        Assert.Equal("2026-09-24T00:00:00Z", el.GetAttribute("starred"));
+        Assert.Equal("2026-09-23T00:00:00Z", el.GetAttribute("played"));
+        Assert.Equal("4", el.GetAttribute("userRating"));
+        Assert.Equal(["s1", "s2"], el.ChildNodes.Cast<XmlElement>().Select(s => s.GetAttribute("id")));
+    }
+
+    [Fact]
+    public void Artist_WritesFieldsAfterTheAlbumList_AsAttributes()
+    {
+        var artist = new Dictionary<string, object?>
+        {
+            ["id"] = "ar1", ["name"] = "Artist",
+            ["album"] = new List<Dictionary<string, object?>> { new() { ["id"] = "al1", ["name"] = "Album" } },
+            ["starred"] = "2026-09-24T00:00:00Z",
+        };
+        var el = Parse(XmlBuilder.Artist(artist)).DocumentElement!["artist", "http://subsonic.org/restapi"]!;
+        Assert.Equal("2026-09-24T00:00:00Z", el.GetAttribute("starred"));
+        Assert.Equal("al1", Assert.Single(el.ChildNodes.Cast<XmlElement>()).GetAttribute("id"));
     }
 
     [Fact]
