@@ -58,6 +58,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.2.0  # no floating major tag (v10) since v8
         with:
           cache-dependency-glob: tests/conformance/*.py  # the scripts declare their dependencies inline
+          save-cache: ${{ matrix.id == 'root' }}  # both jobs have the same cache key: only one saves it
 
       - name: Install podman and ffmpeg
         run: |
