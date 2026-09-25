@@ -7,7 +7,7 @@ and the player on a share's public page.
 
 usage: uv run ui.py <creds.env> <screenshot-dir>   (run.sh --ui runs it after the API checks)
 """
-import hashlib, pathlib, secrets, sys
+import hashlib, json, pathlib, secrets, sys
 from urllib.parse import urlsplit
 
 import requests
@@ -16,6 +16,7 @@ from playwright.sync_api import sync_playwright
 creds = dict(l.split("=", 1) for l in pathlib.Path(sys.argv[1]).read_text().split())
 URL, OUT = creds["URL"], pathlib.Path(sys.argv[2])
 HEADERS = {"Authorization": f'MediaBrowser Token="{creds["JF_TOKEN"]}"'}
+PLUGIN_ID = json.loads((pathlib.Path(__file__).parents[2] / "meta.json").read_text())["guid"]
 USER = "uitest"
 results = []
 
@@ -58,7 +59,7 @@ with sync_playwright() as p:
     page.click(".manualLoginForm button[type=submit]")
     page.wait_for_url("**/home**", timeout=60000)
 
-    page.goto(f"{URL}/web/#/configurationpage?name=Subfin")
+    page.goto(f"{URL}/web/#/configurationpage?name=Subfin-NG")
     page.wait_for_selector("#SubfinConfigPage .subfinUser", timeout=60000)
     # Script errors count from here on. Jellyfin 12.1's own screens sometimes throw while the route
     # changes (scrollHandler on the home screen, CancelledError from the dashboard's queries); a
@@ -108,7 +109,7 @@ with sync_playwright() as p:
     page.click("#SubfinConfigForm .emby-checkbox-label:has(#logRestRequests)")
     page.click("#SubfinConfigForm button[type=submit]")
     page.wait_for_selector("text=Settings saved", timeout=30000)
-    cfg = requests.get(f"{URL}/Plugins/4a3b2c1d-e5f6-7890-abcd-ef1234567890/Configuration", headers=HEADERS, timeout=30).json()
+    cfg = requests.get(f"{URL}/Plugins/{PLUGIN_ID}/Configuration", headers=HEADERS, timeout=30).json()
     check("the settings form saves", cfg.get("LogRestRequests") is (not was), cfg)
     check("no script errors on the page", not errors, errors)
 

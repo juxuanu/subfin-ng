@@ -100,7 +100,7 @@ public class SubsonicAuth
         catch (SecurityException ex)
         {
             // Jellyfin refused a correct login: account disabled, no remote access or outside its schedule
-            _logger.LogInformation("[Subfin] login refused for {User}: {Reason}", u, ex.Message);
+            _logger.LogInformation("[Subfin-NG] login refused for {User}: {Reason}", u, ex.Message);
             return new AuthError(ErrorCode.NotAuthorized, ex.Message);
         }
     }
@@ -119,7 +119,7 @@ public class SubsonicAuth
         {
             return new AuthError(ErrorCode.TokenAuthNotSupported,
                 "This account has no OpenSubsonic password for token login: an administrator can generate one in "
-                + "Dashboard > Plugins > Subfin, or use password (\"legacy\") login with the Jellyfin password.");
+                + "Dashboard > Plugins > Subfin-NG, or use password (\"legacy\") login with the Jellyfin password.");
         }
         var expected = Convert.ToHexStringLower(MD5.HashData(Encoding.UTF8.GetBytes(generated + s)));
         return CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(expected), Encoding.ASCII.GetBytes(t.ToLowerInvariant()))

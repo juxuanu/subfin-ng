@@ -18,7 +18,7 @@ public static class SubsonicConstants
             return $"{v.Build}.{v.Revision}.0";
         }
     }
-    public const string ServerType = "subfin-plugin";
+    public const string ServerType = "subfin-ng";
 
     /// <summary>OpenSubsonic extensions actually implemented, as returned by getOpenSubsonicExtensions.</summary>
     public static readonly (string Name, int[] Versions)[] Extensions =

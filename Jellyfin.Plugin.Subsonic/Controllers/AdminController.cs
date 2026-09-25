@@ -51,7 +51,7 @@ public class AdminController : ControllerBase
         if (_userManager.GetUserById(userId) is not { } user) return NotFound();
         var password = SubsonicAuth.GeneratePassword();
         SubsonicStore.SetSubsonicPassword(user.Id.ToString("N"), password);
-        _logger.LogInformation("[Subfin] generated an OpenSubsonic password for {User}", user.Username);
+        _logger.LogInformation("[Subfin-NG]generated an OpenSubsonic password for {User}", user.Username);
         Response.Headers.CacheControl = "no-store";
         return Ok(new GeneratedPassword(user.Username, password));
     }
@@ -61,7 +61,7 @@ public class AdminController : ControllerBase
     {
         if (_userManager.GetUserById(userId) is not { } user) return NotFound();
         SubsonicStore.DeleteSubsonicPassword(user.Id.ToString("N"));
-        _logger.LogInformation("[Subfin] removed the OpenSubsonic password of {User}", user.Username);
+        _logger.LogInformation("[Subfin-NG]removed the OpenSubsonic password of {User}", user.Username);
         return NoContent();
     }
 

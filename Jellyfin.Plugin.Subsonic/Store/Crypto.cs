@@ -13,7 +13,7 @@ public static class Crypto
     private const int IvLen = 12;
     private const int TagLen = 16;
     private const int KeyLen = 32;
-    private const string KdfSalt = "subfin-db-encryption-v1";
+    private const string KdfSalt = "subfin-db-encryption-v1";  // from Subfin: another salt couldn't read its stored passwords
 
     // Derived keys, cached per salt (deriving takes 100k PBKDF2 iterations).
     private static (string Salt, byte[] Key)? _cachedKey;

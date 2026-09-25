@@ -34,8 +34,8 @@ echo "== starting Jellyfin"
 podman rm -f "$NAME" >/dev/null 2>&1 || true
 podman unshare rm -rf "$WORK/config" "$WORK/cache"
 ver=$(jq -r .version "$ROOT/meta.json")
-mkdir -p "$WORK/config/plugins/Subfin_$ver" "$WORK/cache"
-cp "$PLUGIN" "$ROOT/meta.json" "$WORK/config/plugins/Subfin_$ver/"
+mkdir -p "$WORK/config/plugins/Subfin-NG_$ver" "$WORK/cache"
+cp "$PLUGIN" "$ROOT/meta.json" "$WORK/config/plugins/Subfin-NG_$ver/"
 podman run -d --name "$NAME" -p 127.0.0.1:18097:8096 \
   -v "$WORK/config:/config:Z" -v "$WORK/cache:/cache:Z" -v "$WORK/media:/media:ro,Z" "$IMAGE" >/dev/null
 until curl -sf "$URL/Startup/Configuration" >/dev/null; do sleep 1; done

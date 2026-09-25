@@ -10,9 +10,8 @@ using MediaBrowser.Controller.Playlists;
 namespace Jellyfin.Plugin.Subsonic.Mappers;
 
 /// <summary>
-/// Library query helpers shared between the Subsonic REST controller and the
-/// /subfin web UI controller, so both expand share items and resolve artists
-/// identically (special-character-safe tag entity IDs).
+/// Library query helpers for the OpenSubsonic controller: expanding share items
+/// and resolving artists (special-character-safe tag entity IDs).
 /// </summary>
 public static partial class LibraryQueries
 {

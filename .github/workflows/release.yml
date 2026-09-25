@@ -76,7 +76,7 @@ jobs:
           CHANGELOG: ${{ steps.changelog.outputs.CHANGELOG }}
           IMAGE_URL: https://raw.githubusercontent.com/${{ github.repository }}/main/logo.png
         run: |
-          ZIP_NAME="jellyfin-plugin-subfin_${VERSION}.zip"
+          ZIP_NAME="jellyfin-plugin-subfin-ng_${VERSION}.zip"
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           WORK_DIR=$(mktemp -d)
 
@@ -127,7 +127,8 @@ jobs:
           ENTRY=$(jq -n --arg checksum "$CHECKSUM" --arg changelog "$CHANGELOG" --arg targetAbi "$(jq -r .targetAbi "$META")" \
             --arg sourceUrl "$SOURCE_URL" --arg timestamp "$TIMESTAMP" --arg version "$VERSION" \
             '{version: $version, changelog: $changelog, targetAbi: $targetAbi, sourceUrl: $sourceUrl, checksum: $checksum, timestamp: $timestamp}')
-          VERSIONS=$( (jq '.[0].versions // []' "$MANIFEST" 2>/dev/null || echo '[]') \
+          # earlier versions of this plugin only: the manifest may still list another plugin id (Subfin's)
+          VERSIONS=$( (jq --arg guid "$(jq -r .guid "$META")" '[.[] | select(.guid == $guid) | .versions[]]' "$MANIFEST" 2>/dev/null || echo '[]') \
             | jq --argjson new "$ENTRY" '[$new] + [.[] | select(.version != $new.version)]')
 
           jq --arg imageUrl "$IMAGE_URL" --argjson versions "$VERSIONS" \

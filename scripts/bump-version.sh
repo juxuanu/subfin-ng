@@ -56,4 +56,4 @@ sed -i "s|<FileVersion>[^<]*</FileVersion>|<FileVersion>${NEW_VERSION}</FileVers
 echo "Bumped ${OLD_VERSION} → ${NEW_VERSION}"
 echo "  meta.json:       $(jq -r '.version' "$META_SRC")"
 echo "  serverVersion:   ${SERVER_VERSION}  (what Subsonic clients see)"
-echo "  Plugin dir:      Subfin_${NEW_VERSION}"
+echo "  Plugin dir:      Subfin-NG_${NEW_VERSION}"

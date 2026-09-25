@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate a small, fully tagged test library for Jellyfin + Subfin.
+# Generate a small, fully tagged test library for Jellyfin + Subfin-NG.
 set -euo pipefail
 M="$1/music"; V="$1/movies"
 rm -rf "$1"; mkdir -p "$M" "$V"

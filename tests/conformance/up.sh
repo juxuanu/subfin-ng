@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start a throwaway Jellyfin (podman) with a given Subfin build, configure it and create its users.
+# Start a throwaway Jellyfin (podman) with a given Subfin-NG build, configure it and create its users.
 # usage: [IMAGE=...] [BASEURL=/jellyfin] WORK=<dir> up.sh <plugin.dll> <meta.json>   -> writes $WORK/creds.env
 #   admin "tester" sees every library, "limited" only the Music library; "extra" and "lockme" are
 #   for the account-rule checks, "sharer" owns the shares whose owner's account changes, and
@@ -16,8 +16,8 @@ HDR='MediaBrowser Client="subfin-test", Device="cli", DeviceId="subfin-test-1", 
 podman rm -f "$NAME" >/dev/null 2>&1 || true
 podman unshare rm -rf "$T/config" "$T/cache"
 ver=$(jq -r .version "$2")
-mkdir -p "$T/config/plugins/Subfin_$ver" "$T/cache"
-cp "$1" "$2" "$T/config/plugins/Subfin_$ver/"
+mkdir -p "$T/config/plugins/Subfin-NG_$ver" "$T/cache"
+cp "$1" "$2" "$T/config/plugins/Subfin-NG_$ver/"
 
 podman run -d --name "$NAME" -p 127.0.0.1:18096:8096 \
   -v "$T/config:/config:Z" -v "$T/cache:/cache:Z" -v "$T/media:/media:ro,Z" "$IMAGE" >/dev/null
@@ -88,7 +88,7 @@ if [ -n "$BASEURL" ]; then
   AUTH=$(login tester jfpass)
 fi
 
-curl "$URL/Plugins" -H "Authorization: $AUTH" | jq -r '.[] | select(.Name=="Subfin") | "plugin: \(.Name) \(.Version) \(.Status)"'
+curl "$URL/Plugins" -H "Authorization: $AUTH" | jq -r '.[] | select(.Name=="Subfin-NG") | "plugin: \(.Name) \(.Version) \(.Status)"'
 # Subsonic clients sign in with the same usernames and passwords as Jellyfin
 {
   printf 'URL=%s\nHOST=%s\nBASEURL=%s\nJF_VERSION=%s\nJF_TOKEN=%s\n' "$URL" "$HOST" "$BASEURL" "$JF_VERSION" "$(sed -E 's/.*Token="([^"]+)".*/\1/' <<<"$AUTH")"

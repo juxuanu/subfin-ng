@@ -2,7 +2,7 @@
 # requires-python = ">=3.12"
 # dependencies = ["jsonschema>=4.23", "referencing>=0.35", "requests>=2.32", "rfc3339-validator>=0.1.4"]
 # ///
-"""OpenSubsonic conformance + behaviour checks for a Subfin-enabled Jellyfin.
+"""OpenSubsonic conformance + behaviour checks for a Jellyfin with Subfin-NG.
 
 usage: uv run conformance.py <creds.env> <openapi-dir> <out.json>
 Every JSON response is validated against the endpoint's schema in the OpenSubsonic OpenAPI spec;
@@ -566,7 +566,7 @@ if song_ids:
         record("createShare returned a share URL with secret", False, r)
 
 # ── shares of albums, playlists and artists; getShares; the owner's changes ─
-PLUGIN_ID = "4a3b2c1d-e5f6-7890-abcd-ef1234567890"
+PLUGIN_ID = json.loads((pathlib.Path(__file__).parents[2] / "meta.json").read_text())["guid"]
 
 
 def create_share(ids, auth_params=None, label="createShare", check_schema=True, **params):

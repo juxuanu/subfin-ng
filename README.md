@@ -1,6 +1,8 @@
-# Subfin — OpenSubsonic API for Jellyfin
+# Subfin-NG — OpenSubsonic API for Jellyfin
 
-Subfin lets Subsonic-compatible music apps play your Jellyfin music library. It adds an [OpenSubsonic](https://opensubsonic.netlify.app/) API to Jellyfin itself, so there's no second server to run and no second set of accounts: apps sign in with Jellyfin usernames, and Jellyfin's library access, parental ratings and account rules apply. Everything apps see comes from Jellyfin, including artist biographies, album notes, images and similar artists.
+> Initially a fork to solve a couple issues, it's deviated so much from [the original](https://github.com/williamkray/subfin-plugin) that I decided to call it Subfin-NG (next gen).
+
+Subfin-NG lets Subsonic-compatible music apps play your Jellyfin music library. It adds an [OpenSubsonic](https://opensubsonic.netlify.app/) API to Jellyfin itself, so there's no second server to run and no second set of accounts: apps sign in with Jellyfin usernames, and Jellyfin's library access, parental ratings and account rules apply. Everything apps see comes from Jellyfin, including artist biographies, album notes, images and similar artists.
 
 Requires Jellyfin **12.1** or later.
 
@@ -8,9 +10,9 @@ Requires Jellyfin **12.1** or later.
 
 1. In Jellyfin, open **Dashboard → Plugins → Manage Repositories** and add this repository:
    ```
-   https://raw.githubusercontent.com/juxuanu/subfin-plugin/main/jellyfin-plugin-subfin-manifest.json
+   https://raw.githubusercontent.com/juxuanu/subfin-ng/main/jellyfin-plugin-subfin-manifest.json
    ```
-2. Back in **Plugins**, choose **Available**, open **Subfin** and install it.
+2. Back in **Plugins**, choose **Available**, open **Subfin-NG** and install it.
 3. Restart Jellyfin.
 
 Jellyfin then offers new versions as updates, like for any other plugin.
@@ -22,14 +24,14 @@ Jellyfin then offers new versions as updates, like for any other plugin.
    ```sh
    dotnet publish -c Release Jellyfin.Plugin.Subsonic
    ```
-2. Copy `Jellyfin.Plugin.Subsonic/bin/Release/net10.0/publish/Jellyfin.Plugin.Subsonic.dll` and `meta.json` into a new folder `plugins/Subfin_<version>/` in Jellyfin's data directory. That's `/var/lib/jellyfin/plugins/` for the Linux packages and `/config/plugins/` in the Docker image.
+2. Copy `Jellyfin.Plugin.Subsonic/bin/Release/net10.0/publish/Jellyfin.Plugin.Subsonic.dll` and `meta.json` into a new folder `plugins/Subfin-NG_<version>/` in Jellyfin's data directory. That's `/var/lib/jellyfin/plugins/` for the Linux packages and `/config/plugins/` in the Docker image.
 3. Restart Jellyfin.
 
 </details>
 
 ## Set up
 
-1. In Jellyfin, open **Dashboard → Plugins → Subfin**.
+1. In Jellyfin, open **Dashboard → Plugins → Subfin-NG**.
 2. Click **Generate** next to each user who'll use a music app. Copy the password: it's shown only once.
 3. In the app, add a server:
 
@@ -43,7 +45,7 @@ That's all. Use HTTPS if the app connects from outside your home network.
 
 ## Passwords
 
-The OpenSubsonic password works with token login, the way Navidrome prefers apps to sign in and the default in most apps, and with plain password login. Token login needs the server to know the password, so Subfin stores it encrypted.
+The OpenSubsonic password works with token login, the way Navidrome prefers apps to sign in and the default in most apps, and with plain password login. Token login needs the server to know the password, so Subfin-NG stores it encrypted.
 
 Apps that offer plain password (“legacy”) login can use the Jellyfin password instead. It can't be used for token login, because Jellyfin only stores a hash of it.
 
@@ -55,7 +57,7 @@ Apps can create share links for songs, albums and playlists. A link opens a page
 
 ## Settings
 
-In **Dashboard → Plugins → Subfin**:
+In **Dashboard → Plugins → Subfin-NG**:
 
 - **OpenSubsonic passwords**: one per user, see above.
 - **Enable sharing**: when off, apps can't create share links and existing links stop working.
@@ -65,9 +67,11 @@ In **Dashboard → Plugins → Subfin**:
 
 Install updates from **Plugins**, then restart the Jellyfin service, for example with `systemctl restart jellyfin` or by restarting the container. The Restart button in Jellyfin's dashboard can keep the old plugin code loaded.
 
-## Upgrading from earlier versions
+## Switching from Subfin
 
-Versions with their own device logins (the `/subfin/` page, API at `/rest`) are upgraded on first start. Shares and play queues move to their Jellyfin user, and the device logins and their passwords are deleted. Share links move from `/subfin/share/…` to `/opensubsonic/share/…`. Apps need the new server path and a new password.
+Subfin-NG is a separate plugin from Subfin, including this repository's releases before the rename. In **Plugins**, uninstall Subfin and restart Jellyfin, then install Subfin-NG and restart again. Passwords, shares and settings carry over, and apps keep working as they are.
+
+Subfin versions with their own device logins (the `/subfin/` page, API at `/rest`) are upgraded on first start. Shares and play queues move to their Jellyfin user, and the device logins and their passwords are deleted. Share links move from `/subfin/share/…` to `/opensubsonic/share/…`. Apps need the new server path and a new password.
 
 ## Development
 

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Subfin</title>
+  <title>Subfin-NG</title>
 </head>
 <body>
   <div id="SubfinConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
@@ -19,7 +19,7 @@
     <div data-role="content">
       <div class="content-primary">
 
-        <h2 class="sectionTitle">Subfin</h2>
+        <h2 class="sectionTitle">Subfin-NG</h2>
         <p>
           Subsonic apps connect to your Jellyfin address with the path <code class="subfinServer" id="subfinServerPath"></code>,
           signing in with a Jellyfin username and that user's OpenSubsonic password, generated below. The OpenSubsonic
@@ -64,7 +64,7 @@
 
     <script type="text/javascript">
       (function () {
-        var pluginId = '4a3b2c1d-e5f6-7890-abcd-ef1234567890';
+        var pluginId = 'a5d299f5-eb55-4574-85cc-84e1a2f86972';
         var page = document.querySelector('#SubfinConfigPage');
         // Just the path (with Jellyfin's base URL, if any): apps reach Jellyfin by their own address
         var serverPath = function () { return new URL(ApiClient.getUrl('opensubsonic'), window.location.href).pathname; };
@@ -76,7 +76,7 @@
         }
 
         function showError(message, error) {
-          if (error) console.error('[Subfin]', message, error);
+          if (error) console.error('[Subfin-NG]', message, error);
           Dashboard.hideLoadingMsg();
           if (Dashboard.alert) Dashboard.alert({ message: message });
           else window.alert(message);
@@ -184,7 +184,7 @@
               page.querySelector('#logRestRequests').checked = !!config.LogRestRequests;
             }),
             loadUsers()
-          ]).then(function () { Dashboard.hideLoadingMsg(); }, function (e) { showError('Could not load the Subfin settings.', e); });
+          ]).then(function () { Dashboard.hideLoadingMsg(); }, function (e) { showError('Could not load the Subfin-NG settings.', e); });
         });
 
         page.querySelector('#SubfinConfigForm').addEventListener('submit', function (e) {

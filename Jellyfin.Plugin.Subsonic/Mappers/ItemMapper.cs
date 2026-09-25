@@ -244,7 +244,7 @@ public static class ItemMapper
     }
 
     /// <summary>Per-user fields (starred, userRating, playCount, played); omitted when unset.</summary>
-    /// <param name="starredAt">When it was starred through Subfin; Jellyfin itself keeps no date, so
+    /// <param name="starredAt">When it was starred through Subfin-NG; Jellyfin itself keeps no date, so
     /// favourites set elsewhere fall back to the item's creation date.</param>
     private static void AddUserData(Dictionary<string, object?> result, BaseItem item, UserItemData? data, string? starredAt)
     {

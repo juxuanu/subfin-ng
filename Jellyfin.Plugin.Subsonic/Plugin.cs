@@ -25,28 +25,30 @@ public sealed class SubsonicPlugin : BasePlugin<PluginConfiguration>, IHasWebPag
         {
             Configuration.Salt = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
             SaveConfiguration();
-            logger.LogInformation("[Subfin] Generated new encryption salt");
+            logger.LogInformation("[Subfin-NG] Generated new encryption salt");
         }
 
         // Initialize SQLite store — migrate data dir from SubsonicPlugin → SubfinPlugin if needed.
+        // Still named after Subfin, whose installs keep their data when they switch to Subfin-NG.
         var oldDataDir = Path.Combine(applicationPaths.DataPath, "SubsonicPlugin");
         var dataDir = Path.Combine(applicationPaths.DataPath, "SubfinPlugin");
         if (Directory.Exists(oldDataDir) && !Directory.Exists(dataDir))
         {
             Directory.Move(oldDataDir, dataDir);
-            logger.LogInformation("[Subfin] Migrated data dir SubsonicPlugin → SubfinPlugin");
+            logger.LogInformation("[Subfin-NG] Migrated data dir SubsonicPlugin → SubfinPlugin");
         }
         Directory.CreateDirectory(dataDir);
         SubsonicStore.Initialize(Path.Combine(dataDir, "subsonic.db"), Configuration.Salt);
 
-        logger.LogInformation("[Subfin] Plugin loaded, DB at {DataDir}", dataDir);
+        logger.LogInformation("[Subfin-NG] Plugin loaded, DB at {DataDir}", dataDir);
     }
 
     public static SubsonicPlugin? Instance { get; private set; }
 
-    public override string Name => "Subfin";
+    public override string Name => "Subfin-NG";
 
-    public override Guid Id => Guid.Parse("4a3b2c1d-e5f6-7890-abcd-ef1234567890");
+    // Not the id of Subfin, which Subfin-NG started as a fork of: Jellyfin tells plugins apart by id
+    public override Guid Id => Guid.Parse("a5d299f5-eb55-4574-85cc-84e1a2f86972");
 
     public override string Description =>
         "OpenSubsonic API at /opensubsonic: use Subsonic/Navidrome clients with Jellyfin, signing in with Jellyfin accounts.";
@@ -57,7 +59,7 @@ public sealed class SubsonicPlugin : BasePlugin<PluginConfiguration>, IHasWebPag
         [
             new PluginPageInfo
             {
-                Name = "Subfin",
+                Name = "Subfin-NG",
                 EmbeddedResourcePath = $"{GetType().Namespace}.Web.Views.config.html",
             },
         ];

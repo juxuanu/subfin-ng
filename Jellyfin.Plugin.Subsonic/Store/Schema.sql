@@ -1,4 +1,4 @@
--- Subfin Plugin SQLite schema.
+-- Subfin-NG SQLite schema.
 -- No jellyfin_url anywhere — single-instance scope.
 
 -- The OpenSubsonic password an administrator generated for a Jellyfin user. Token logins
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS shares (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- When an item was starred through Subfin; Jellyfin's favourites carry no timestamp.
+-- When an item was starred through Subfin-NG; Jellyfin's favourites carry no timestamp.
 CREATE TABLE IF NOT EXISTS starred_at (
   jellyfin_user_id TEXT NOT NULL,
   item_id TEXT NOT NULL,
