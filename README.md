@@ -65,7 +65,7 @@ In **Dashboard → Plugins → Subfin-NG**:
 
 ## Updating
 
-Install updates from **Plugins**, then restart the Jellyfin service, for example with `systemctl restart jellyfin` or by restarting the container. The Restart button in Jellyfin's dashboard can keep the old plugin code loaded.
+Install updates from **Plugins**, then restart Jellyfin.
 
 ## Switching from Subfin
 
