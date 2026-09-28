@@ -1587,6 +1587,16 @@ public class SubsonicController(
         return error == null;
     }
 
+    /// <summary>
+    /// Whether a stream can be the file itself: "raw" asks for it, and otherwise the format asked for
+    /// must be the file's own (or none) and the file within the bitrate limit. Apps send a format and a
+    /// limit with every song, so transcoding whenever they're present re-encodes files that already fit.
+    /// </summary>
+    internal static bool CanSendFile(string? targetFormat, int maxBitRate, string suffix, int fileBitRate) =>
+        targetFormat == "raw"
+        || ((targetFormat == null || string.Equals(targetFormat, suffix, StringComparison.OrdinalIgnoreCase))
+            && (maxBitRate <= 0 || (fileBitRate > 0 && fileBitRate <= maxBitRate)));
+
     private async Task<IActionResult> Stream(AuthResult auth, User user, QueryParams p, string format)
     {
         if (!TryGetServableSong(auth, user, p, format, PermissionKind.EnableMediaPlayback, out var item, out var err)) return err!;
@@ -1597,10 +1607,13 @@ public class SubsonicController(
         var bitRate = p.MaxBitRate;   // kbps; 0 = unspecified
         var timeOff = p.TimeOffset;   // seconds; 0 = from start
 
-        var needsTranscode = (targetFormat != null && targetFormat != "raw") || bitRate > 0 || timeOff > 0;
+        var suffix = ItemMapper.AudioSuffix(item);
+        var fileBitRate = ItemMapper.AudioBitRate(item, item.GetMediaStreams().FirstOrDefault(s => s.Type == MediaStreamType.Audio));
+        // An offset needs a transcode that starts there; apps seek in the file itself with range requests
+        var needsTranscode = timeOff > 0 || !CanSendFile(targetFormat, bitRate, suffix, fileBitRate);
 
-        logger.LogInformation("[Subfin-NG] stream id={Id} format={Format} bitRate={BitRate} timeOff={TimeOff} needsTranscode={NeedsTranscode}",
-            id, targetFormat, bitRate, timeOff, needsTranscode);
+        logger.LogInformation("[Subfin-NG] stream id={Id} ({Suffix}, {FileBitRate} kbps) format={Format} bitRate={BitRate} timeOff={TimeOff} needsTranscode={NeedsTranscode}",
+            id, suffix, fileBitRate, targetFormat, bitRate, timeOff, needsTranscode);
 
         var apiKey = needsTranscode ? await GetOrCreatePluginApiKey() : null;
         if (needsTranscode && string.IsNullOrEmpty(apiKey))

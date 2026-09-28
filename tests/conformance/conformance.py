@@ -347,6 +347,19 @@ if song_ids:
     record("stream maxBitRate=64 after a full-rate stream of the same song: 64 kbps", 56_000 <= low[1] <= 72_000, (full, low))
     d = call("download", {"id": song_ids[0]}, raw_resp=True)
     record("download: 200 with body", d.status_code == 200 and len(d.content) > 1000, (d.status_code, d.headers.get("content-type"), len(d.content)))
+    # The file itself whenever it fits what's asked for: apps send a format and a bitrate limit with every song
+    mp3_album = call("getAlbum", {"id": albums["Ünïcode Album"]["id"]}, check_schema=False, label="an mp3") if "Ünïcode Album" in albums else None
+    mp3_song = ((mp3_album or {}).get("album", {}).get("song") or [{}])[0].get("id")
+    mp3_file = call("download", {"id": mp3_song}, raw_resp=True).content if mp3_song else None
+    same = lambda song, file, params: call("stream", [("id", song), *params], raw_resp=True).content == file
+    got = {"flac, format=flac": same(song_ids[0], d.content, [("format", "flac")]),
+           "flac, maxBitRate over the file's": same(song_ids[0], d.content, [("maxBitRate", "100000")]),
+           "mp3, format=mp3 maxBitRate=320": bool(mp3_song) and same(mp3_song, mp3_file, [("format", "mp3"), ("maxBitRate", "320")])}
+    record("stream sends the file itself when it's in the format and within the bitrate asked for", all(got.values()), got)
+    s = call("stream", [("id", song_ids[0]), ("maxBitRate", "64")], raw_resp=True)
+    got = (s.headers.get("content-type"), probe(s.content))
+    record("... and transcodes a file over the limit, to mp3 when no format is asked for",
+           (got[0] or "").startswith("audio/mpeg") and 56_000 <= got[1][1] <= 72_000, got)
 for name in ("Album One", "Double Album"):
     if name in albums:
         c = call("getCoverArt", {"id": albums[name].get("coverArt") or albums[name]["id"], "size": 64}, raw_resp=True)

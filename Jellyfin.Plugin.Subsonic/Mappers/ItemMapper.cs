@@ -191,6 +191,18 @@ public static class ItemMapper
 
     // ── Song ─────────────────────────────────────────────────────────────────
 
+    /// <summary>The file's average bitrate in kbps (size over length), embedded images included.</summary>
+    private static int AverageBitRate(Audio song)
+    {
+        var duration = TicksToSeconds(song.RunTimeTicks);
+        var size = song.Size ?? 0L;
+        return duration > 0 && size > 0 ? (int)(size * 8L / duration / 1000L) : 0;
+    }
+
+    /// <summary>The audio's bitrate in kbps: its stream's as Jellyfin probed it, else the file's average.</summary>
+    public static int AudioBitRate(Audio song, MediaBrowser.Model.Entities.MediaStream? audioStream) =>
+        audioStream?.BitRate is { } bitsPerSecond and > 0 ? bitsPerSecond / 1000 : AverageBitRate(song);
+
     /// <param name="relativePath">Path inside its library; defaults to the file name (never the server path).</param>
     /// <param name="artistIdOf">Artist name to id, for the OpenSubsonic artists and albumArtists lists; without it they're left out.</param>
     public static Dictionary<string, object?> ToSong(Audio song, string? albumId = null, string? albumName = null, string? artistId = null,
@@ -198,7 +210,7 @@ public static class ItemMapper
     {
         var duration = TicksToSeconds(song.RunTimeTicks);
         var size = song.Size ?? 0L;
-        var bitRate = duration > 0 && size > 0 ? (int)((size * 8L) / duration / 1000L) : 0;
+        var bitRate = AverageBitRate(song);
 
         // ParentId is the album only for single-folder albums; tracks in disc subfolders
         // (Album/CD 1/...) have the disc folder as parent, so ask for the album itself.
