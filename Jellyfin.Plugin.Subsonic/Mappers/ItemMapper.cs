@@ -205,8 +205,10 @@ public static class ItemMapper
 
     /// <param name="relativePath">Path inside its library; defaults to the file name (never the server path).</param>
     /// <param name="artistIdOf">Artist name to id, for the OpenSubsonic artists and albumArtists lists; without it they're left out.</param>
+    /// <param name="bookmarkPosition">Where the user's bookmark in the song is, in milliseconds (as Subsonic and Navidrome send it).</param>
     public static Dictionary<string, object?> ToSong(Audio song, string? albumId = null, string? albumName = null, string? artistId = null,
-        UserItemData? userData = null, string? starredAt = null, string? relativePath = null, Func<string, string?>? artistIdOf = null)
+        UserItemData? userData = null, string? starredAt = null, string? relativePath = null, Func<string, string?>? artistIdOf = null,
+        long? bookmarkPosition = null)
     {
         var duration = TicksToSeconds(song.RunTimeTicks);
         var size = song.Size ?? 0L;
@@ -262,6 +264,7 @@ public static class ItemMapper
             result["albumArtists"] = ArtistRefs(song.AlbumArtists, artistIdOf);
         }
         AddUserData(result, song, userData, starredAt);
+        if (bookmarkPosition != null) result["bookmarkPosition"] = bookmarkPosition;
         return result;
     }
 

@@ -481,6 +481,33 @@ if song_ids and "Album One" in albums:
            bool(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)", q.get("changed", "")))
            and abs(datetime.fromisoformat(q["changed"].replace("Z", "+00:00")).timestamp() - time.time()) < 120, q.get("changed"))
 
+# ── bookmarks: a position the user saves in a song, kept by the plugin ─────
+if song_ids:
+    bsong = song_ids[1]
+    marked = lambda label, **kw: next((x for x in (call("getBookmarks", label=label, **kw) or {}).get("bookmarks", {}).get("bookmark", [])
+                                        if x.get("entry", {}).get("id") == bsong), None)
+    r = call("createBookmark", {"id": bsong}, check_schema=False, label="bookmark without a position")
+    record("createBookmark without a position -> error 10", err(r) == 10, r)
+    r = call("createBookmark", {"id": secrets.token_hex(16), "position": "1000"}, check_schema=False, label="bookmark of a missing song")
+    record("createBookmark of a missing song -> error 70", err(r) == 70, r)
+    made = ok(call("createBookmark", {"id": bsong, "position": "61500", "comment": "the solo"}, label="createBookmark"))
+    b = marked("getBookmarks") or {}
+    record("getBookmarks has it: song, position, comment, username and ISO dates",
+           made and (b.get("position"), b.get("comment"), b.get("username")) == (61500, "the solo", SU)
+           and all(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", b.get(k, "")) for k in ("created", "changed")), b)
+    song = (call("getSong", {"id": bsong}, check_schema=False, label="bookmarked song") or {}).get("song", {})
+    record("... and the song carries bookmarkPosition, in milliseconds", song.get("bookmarkPosition") == 61500, song.get("bookmarkPosition"))
+    time.sleep(1.1)  # dates go to the second
+    call("createBookmark", {"id": bsong, "position": "90000"}, check_schema=False, label="bookmark moved")
+    moved = marked("bookmarks after a move", check_schema=False) or {}
+    record("another createBookmark replaces it, keeping when it was created",
+           (moved.get("position"), moved.get("comment"), moved.get("created")) == (90000, None, b.get("created"))
+           and moved.get("changed", "") > b.get("changed", "~"), (b, moved))
+    record("bookmarks are the user's own", marked("another user's bookmarks", auth_params=admin(), check_schema=False) is None)
+    record("deleteBookmark removes it", ok(call("deleteBookmark", {"id": bsong}, label="deleteBookmark"))
+           and marked("bookmarks after a delete", check_schema=False) is None
+           and "bookmarkPosition" not in (call("getSong", {"id": bsong}, check_schema=False, label="unbookmarked song") or {}).get("song", {}))
+
 # ── starred = a Jellyfin favourite, both ways, artists included ─────────────
 if song_ids and test_artist and "Album One" in albums:
     aid, alid, sid = test_artist["id"], albums["Album One"]["id"], song_ids[0]
@@ -837,7 +864,8 @@ if secret_song and secret_album and song_ids:
            not any((r or {}).get("searchResult3", {}).get(k) for k in ("song", "album")), r, "security")
     for ep, params in [("getSong", {"id": secret_song}), ("getAlbum", {"id": secret_album}),
                        ("getMusicDirectory", {"id": secret_album}), ("getLyricsBySongId", {"id": secret_song}),
-                       ("getSimilarSongs", {"id": secret_song}), ("getAlbumInfo2", {"id": secret_album})]:
+                       ("getSimilarSongs", {"id": secret_song}), ("getAlbumInfo2", {"id": secret_album}),
+                       ("createBookmark", {"id": secret_song, "position": "1000"})]:
         r = call(ep, params, check_schema=False, label=f"restricted {ep}")
         record(f"{ep} of a restricted item -> error 70", err(r) == 70, r, "security")
     for ep, rid in (("stream", secret_song), ("download", secret_song), ("getCoverArt", secret_album)):
@@ -1172,6 +1200,7 @@ if song_ids and test_artist and {"Album One", "Double Album"} <= set(albums):
     xpl = (call("createPlaylist", [("name", "XML"), ("songId", song_ids[0]), ("songId", song_ids[1])], check_schema=False, label="xml: playlist")
            or {}).get("playlist", {}).get("id")
     xsh = create_share([albums["Album One"]["id"]], check_schema=False, label="xml: share", description="for XML")
+    call("createBookmark", {"id": song_ids[1], "position": "61500", "comment": "for XML"}, check_schema=False, label="xml: bookmark")
     for label, endpoint, params, *who in [
         ("ping", "ping", {}), ("getLicense", "getLicense", {}), ("getOpenSubsonicExtensions", "getOpenSubsonicExtensions", {}),
         ("getMusicFolders", "getMusicFolders", {}), ("getIndexes", "getIndexes", {}), ("getArtists", "getArtists", {}),
@@ -1184,6 +1213,7 @@ if song_ids and test_artist and {"Album One", "Double Album"} <= set(albums):
         ("search2", "search2", {"query": "Song"}), ("search3", "search3", {"query": ""}),
         ("getStarred", "getStarred", {}), ("getStarred2", "getStarred2", {}),
         ("getPlaylists", "getPlaylists", {}), ("getPlaylist", "getPlaylist", {"id": xpl}), ("getPlayQueue", "getPlayQueue", {}),
+        ("getBookmarks", "getBookmarks", {}),
         ("getShares", "getShares", {}), ("getUser", "getUser", {"username": SU}), ("getUsers", "getUsers", {}, admin()),
         ("getScanStatus", "getScanStatus", {}), ("getNowPlaying", "getNowPlaying", {}),
         ("getArtistInfo", "getArtistInfo", {"id": test_artist["id"]}), ("getArtistInfo2", "getArtistInfo2", {"id": test_artist["id"]}),
@@ -1196,6 +1226,7 @@ if song_ids and test_artist and {"Album One", "Double Album"} <= set(albums):
     ]:
         xml_matches_json(label, endpoint, params, *who)
     call("unstar", [("id", song_ids[0]), ("albumId", albums["Album One"]["id"]), ("artistId", test_artist["id"])], check_schema=False, label="xml: unstar")
+    call("deleteBookmark", {"id": song_ids[1]}, check_schema=False, label="xml: bookmark cleanup")
     if xpl:
         call("deletePlaylist", {"id": xpl}, check_schema=False, label="xml: playlist cleanup")
     if xsh:

@@ -369,6 +369,23 @@ public static class XmlBuilder
         w.WriteEndElement();
     });
 
+    // ── Bookmarks ────────────────────────────────────────────────────────────
+
+    public static string Bookmarks(List<Dictionary<string, object?>> bookmarks) => OkEnvelope(w =>
+    {
+        w.WriteStartElement("bookmarks", Ns);
+        foreach (var b in bookmarks)
+        {
+            w.WriteStartElement("bookmark", Ns);
+            foreach (var kv in b.Where(kv => kv.Key != "entry")) WriteAttr(w, kv.Key, kv.Value);
+            w.WriteStartElement("entry", Ns);
+            WriteSongContent(w, (Dictionary<string, object?>)b["entry"]!);
+            w.WriteEndElement();
+            w.WriteEndElement();
+        }
+        w.WriteEndElement();
+    });
+
     // ── Starred ──────────────────────────────────────────────────────────────
 
     public static string Starred(List<Dictionary<string, object?>> artists, List<Dictionary<string, object?>> albums, List<Dictionary<string, object?>> songs, bool v2 = false) => OkEnvelope(w =>

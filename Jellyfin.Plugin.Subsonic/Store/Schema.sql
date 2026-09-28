@@ -33,6 +33,18 @@ CREATE TABLE IF NOT EXISTS shares (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- A position a user saved in a song, to resume it later (Subsonic bookmarks); Jellyfin keeps
+-- resume positions for audiobooks and videos only.
+CREATE TABLE IF NOT EXISTS bookmarks (
+  user_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  position_ms INTEGER NOT NULL,
+  comment TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+  changed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),  -- milliseconds: getBookmarks sorts by it
+  PRIMARY KEY (user_id, item_id)
+);
+
 -- When an item was starred through Subfin-NG; Jellyfin's favourites carry no timestamp.
 CREATE TABLE IF NOT EXISTS starred_at (
   jellyfin_user_id TEXT NOT NULL,

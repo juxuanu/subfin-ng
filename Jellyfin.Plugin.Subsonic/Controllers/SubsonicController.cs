@@ -180,6 +180,9 @@ public class SubsonicController(
             "getnowplaying" => GetNowPlaying(format),
             "saveplayqueue" => SavePlayQueue(user, p, format),
             "getplayqueue" => GetPlayQueue(user, format),
+            "createbookmark" => CreateBookmark(user, p, format),
+            "getbookmarks" => GetBookmarks(user, format),
+            "deletebookmark" => DeleteBookmark(user, p, format),
             "getshares" or "createshare" or "updateshare" or "deleteshare"
                 when SubsonicPlugin.Instance?.Configuration?.SharingEnabled == false
                 => ErrorResponse(format, ErrorCode.NotAuthorized, "Sharing is disabled."),
@@ -1069,6 +1072,54 @@ public class SubsonicController(
         return Respond(format, json, () => XmlBuilder.PlayQueue(pq.CurrentId, pq.CurrentIndex, pq.PositionMs, changed, pq.ChangedBy, songs, user.Username));
     }
 
+    // ── createBookmark / getBookmarks / deleteBookmark ───────────────────────
+
+    // Positions users save in songs to resume them later. Jellyfin keeps resume positions for audiobooks
+    // and videos only, so, like the play queue, they're kept in the plugin's database.
+
+    private IActionResult CreateBookmark(User user, QueryParams p, string format)
+    {
+        if (!TryParseItemId(p.Id, format, out var guid, out var err)) return err!;
+        if (!long.TryParse(p.Get("position"), NumberStyles.None, CultureInfo.InvariantCulture, out var positionMs))
+            return ErrorResponse(format, ErrorCode.RequiredParameterMissing, "Missing position (in milliseconds)");
+        if (GetVisibleItem<Audio>(guid) == null) return ErrorResponse(format, ErrorCode.NotFound, "Song not found");
+
+        SubsonicStore.SetBookmark(user.Id.ToString("N"), guid.ToString("N"), positionMs, p.Get("comment"));
+        return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping);
+    }
+
+    private IActionResult GetBookmarks(User user, string format)
+    {
+        // Songs the user can no longer see (removed, or no longer accessible) are left out
+        var bookmarks = SubsonicStore.GetBookmarks(user.Id.ToString("N"))
+            .Select(b => (Bookmark: b, Song: Guid.TryParse(b.ItemId, out var guid) ? GetVisibleItem<Audio>(guid) : null))
+            .Where(b => b.Song != null).ToList();
+        Prefetch(bookmarks.Select(b => b.Song!));
+
+        var mapped = bookmarks.Select(b =>
+        {
+            var bookmark = new Dictionary<string, object?>
+            {
+                ["position"] = b.Bookmark.PositionMs,
+                ["username"] = user.Username,
+                ["created"] = ToIsoDateTime(b.Bookmark.CreatedAt),
+                ["changed"] = ToIsoDateTime(b.Bookmark.ChangedAt),
+                ["entry"] = ToSongWithArtist(b.Song!),
+            };
+            if (b.Bookmark.Comment != null) bookmark["comment"] = b.Bookmark.Comment;
+            return bookmark;
+        }).ToList();
+        var json = SubsonicEnvelope.Ok(new() { ["bookmarks"] = new Dictionary<string, object> { ["bookmark"] = mapped } });
+        return Respond(format, json, () => XmlBuilder.Bookmarks(mapped));
+    }
+
+    private IActionResult DeleteBookmark(User user, QueryParams p, string format)
+    {
+        if (!TryParseItemId(p.Id, format, out var guid, out var err)) return err!;
+        SubsonicStore.DeleteBookmark(user.Id.ToString("N"), guid.ToString("N"));
+        return Respond(format, SubsonicEnvelope.Ok(), XmlBuilder.Ping);
+    }
+
     // ── Shares ───────────────────────────────────────────────────────────────
 
     private IActionResult GetShares(User user, string format)
@@ -1839,7 +1890,8 @@ public class SubsonicController(
     private Dictionary<string, object?> ToAlbumSong(Audio s, MusicAlbum? album) =>
         ItemMapper.ToSong(s, album?.Id.ToString("N") ?? _albumOfFolder.GetValueOrDefault(s.ParentId), album?.Name,
             artistId: ResolveArtistTagId(s.Artists.FirstOrDefault() ?? s.AlbumArtists.FirstOrDefault()),
-            userData: UserDataFor(s), starredAt: StarredAt(s), relativePath: RelativePath(s.Path), artistIdOf: ArtistIdOf);
+            userData: UserDataFor(s), starredAt: StarredAt(s), relativePath: RelativePath(s.Path), artistIdOf: ArtistIdOf,
+            bookmarkPosition: BookmarkAt(s));
 
     private Dictionary<string, object?> ToAlbumWithArtist(MusicAlbum a) =>
         ItemMapper.ToAlbumShort(a, ResolveArtistTagId(a.AlbumArtist ?? a.AlbumArtists.FirstOrDefault()), UserDataFor(a), StarredAt(a), ArtistIdOf,
@@ -1925,6 +1977,16 @@ public class SubsonicController(
 
     /// <summary>An album for the ID3 endpoints (getArtist, getAlbumList2, search3, getStarred2).</summary>
     private Dictionary<string, object?> ToAlbumId3WithArtist(MusicAlbum a) => ItemMapper.AsAlbumId3(ToAlbumWithArtist(a));
+
+    // Per-request: where the current user's bookmarks are, in milliseconds.
+    private Dictionary<string, long>? _bookmarkPositions;
+
+    private long? BookmarkAt(BaseItem item)
+    {
+        if (_currentUser == null) return null;
+        _bookmarkPositions ??= SubsonicStore.GetBookmarks(_currentUser.Id.ToString("N")).ToDictionary(b => b.ItemId, b => b.PositionMs);
+        return _bookmarkPositions.TryGetValue(item.Id.ToString("N"), out var positionMs) ? positionMs : null;
+    }
 
     // Per-request: when the current user starred items through Subfin-NG.
     private Dictionary<string, string>? _starredDates;

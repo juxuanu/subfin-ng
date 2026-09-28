@@ -15,6 +15,9 @@ public record PlayQueueRecord(
     string? ChangedAt,
     string ChangedBy);
 
+/// <summary>A position a user saved in a song, in milliseconds.</summary>
+public record BookmarkRecord(string ItemId, long PositionMs, string? Comment, string CreatedAt, string ChangedAt);
+
 /// <summary>Share record.</summary>
 public record ShareRecord(
     string ShareUid,
@@ -370,6 +373,57 @@ public static class SubsonicStore
             if (blob == null) return null;
             try { return Crypto.Decrypt(blob, _salt); }
             catch { return null; }
+        }
+    }
+
+    // ── Bookmarks ────────────────────────────────────────────────────────────
+
+    /// <summary>Saves a user's bookmark in a song, replacing the one there (which keeps its creation date).</summary>
+    public static void SetBookmark(string userId, string itemId, long positionMs, string? comment)
+    {
+        lock (DbLock)
+        {
+            using var cmd = Db.CreateCommand();
+            cmd.CommandText = @"
+                INSERT INTO bookmarks (user_id, item_id, position_ms, comment) VALUES (@u, @i, @pos, @c)
+                ON CONFLICT(user_id, item_id) DO UPDATE SET position_ms = @pos, comment = @c,
+                  changed_at = strftime('%Y-%m-%d %H:%M:%f', 'now')";
+            cmd.Parameters.AddWithValue("@u", userId);
+            cmd.Parameters.AddWithValue("@i", itemId);
+            cmd.Parameters.AddWithValue("@pos", positionMs);
+            cmd.Parameters.AddWithValue("@c", (object?)comment ?? DBNull.Value);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>A user's bookmarks, the most recently changed first.</summary>
+    public static List<BookmarkRecord> GetBookmarks(string userId)
+    {
+        lock (DbLock)
+        {
+            var result = new List<BookmarkRecord>();
+            using var cmd = Db.CreateCommand();
+            cmd.CommandText = @"
+                SELECT item_id, position_ms, comment, created_at, changed_at FROM bookmarks
+                WHERE user_id = @u ORDER BY changed_at DESC, rowid DESC";
+            cmd.Parameters.AddWithValue("@u", userId);
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+                result.Add(new BookmarkRecord(reader.GetString(0), reader.GetInt64(1), reader.IsDBNull(2) ? null : reader.GetString(2),
+                    reader.GetString(3), reader.GetString(4)));
+            return result;
+        }
+    }
+
+    public static void DeleteBookmark(string userId, string itemId)
+    {
+        lock (DbLock)
+        {
+            using var cmd = Db.CreateCommand();
+            cmd.CommandText = "DELETE FROM bookmarks WHERE user_id = @u AND item_id = @i";
+            cmd.Parameters.AddWithValue("@u", userId);
+            cmd.Parameters.AddWithValue("@i", itemId);
+            cmd.ExecuteNonQuery();
         }
     }
 
