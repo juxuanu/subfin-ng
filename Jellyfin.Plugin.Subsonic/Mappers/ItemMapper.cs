@@ -12,13 +12,23 @@ public static class ItemMapper
     public static int TicksToSeconds(long? ticks) =>
         ticks.HasValue ? (int)(ticks.Value / TicksPerSecond) : 0;
 
-    public static string AudioMimeType(string? container) => container?.ToLowerInvariant() switch
+    /// <summary>
+    /// A song's file type as Subsonic apps expect it: its file extension. Jellyfin's container can be
+    /// ffmpeg's list of formats instead ("mov,mp4,m4a,3gp,3g2,mj2" for an .m4a), which apps don't know.
+    /// </summary>
+    public static string AudioSuffix(BaseItem song) =>
+        Path.GetExtension(song.Path)?.TrimStart('.').ToLowerInvariant() is { Length: > 0 } extension
+            ? extension
+            : song.Container?.Split(',')[0].ToLowerInvariant() ?? "mp3";
+
+    public static string AudioMimeType(string? suffix) => suffix?.ToLowerInvariant() switch
     {
         "mp3" => "audio/mpeg",
         "flac" => "audio/flac",
         "ogg" or "oga" => "audio/ogg",
         "opus" => "audio/ogg; codecs=opus",
-        "aac" or "m4a" => "audio/aac",
+        "m4a" or "m4b" or "mp4" => "audio/mp4",
+        "aac" => "audio/aac",
         "wav" => "audio/wav",
         "wma" => "audio/x-ms-wma",
         _ => "application/octet-stream",
@@ -200,8 +210,8 @@ public static class ItemMapper
         var mediaStream = song.GetMediaStreams()
             .FirstOrDefault(s => s.Type == MediaBrowser.Model.Entities.MediaStreamType.Audio);
 
-        var suffix = song.Container?.ToLowerInvariant() ?? "mp3";
-        var mimeType = AudioMimeType(song.Container);
+        var suffix = AudioSuffix(song);
+        var mimeType = AudioMimeType(suffix);
         var result = new Dictionary<string, object?>
         {
             ["id"] = song.Id.ToString("N"),

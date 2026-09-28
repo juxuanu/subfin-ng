@@ -76,7 +76,7 @@ public class SubsonicController(
 
         var config = SubsonicPlugin.Instance?.Configuration;
         if (config?.LogRestRequests == true)
-            logger.LogInformation("[Subfin-NG]{Method} {Format}", method, format);
+            logger.LogInformation("[Subfin-NG] {Method} {Format}", method, format);
 
         var m = method.ToLowerInvariant().TrimEnd();
 
@@ -109,7 +109,7 @@ public class SubsonicController(
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "[Subfin-NG]Error handling {Method}", method);
+            logger.LogError(ex, "[Subfin-NG] Error handling {Method}", method);
             return ErrorResponse(format, ErrorCode.Generic, "Internal server error.");
         }
     }
@@ -328,7 +328,7 @@ public class SubsonicController(
         if (artist == null) return ErrorResponse(format, ErrorCode.NotFound, "Artist not found");
 
         var albums = Prefetch(ArtistAlbums(user, artist));
-        logger.LogInformation("[Subfin-NG]getArtist {Name} (guid={Guid}): {Count} albums", artist.Name, guid, albums.Count);
+        logger.LogInformation("[Subfin-NG] getArtist {Name} (guid={Guid}): {Count} albums", artist.Name, guid, albums.Count);
 
         var artistId = artist.Id.ToString("N");
         var mapped = ItemMapper.ToArtistWithAlbums(artist, albums, a => ItemMapper.AsAlbumId3(ItemMapper.ToAlbumShort(a, artistId, UserDataFor(a), StarredAt(a), ArtistIdOf,
@@ -412,7 +412,7 @@ public class SubsonicController(
 
             if (folderEntities.Count > 0)
             {
-                logger.LogInformation("[Subfin-NG]getMusicDirectory fallback: tag entity {TagName} → {Count} folder entity/entities",
+                logger.LogInformation("[Subfin-NG] getMusicDirectory fallback: tag entity {TagName} → {Count} folder entity/entities",
                     item.Name, folderEntities.Count);
                 children = folderEntities
                     .SelectMany(fe => library.GetItemList(new InternalItemsQuery(user)
@@ -895,7 +895,7 @@ public class SubsonicController(
         if (data.LastPlayedDate is not { } last || last < at)
             data.LastPlayedDate = at;
         userData.SaveUserData(user, item, data, UserDataSaveReason.PlaybackFinished, CancellationToken.None);
-        logger.LogInformation("[Subfin-NG]scrobble: recorded play from {At:o}", at);
+        logger.LogInformation("[Subfin-NG] scrobble: recorded play from {At:o}", at);
     }
 
     private static void RememberStreamedAs(Guid userId, Guid itemId, PlayMethod method)
@@ -965,7 +965,7 @@ public class SubsonicController(
                     PositionTicks = item.RunTimeTicks,
                     Failed = false,
                 });
-                logger.LogInformation("[Subfin-NG]scrobble: sent start+stop (submission)");
+                logger.LogInformation("[Subfin-NG] scrobble: sent start+stop (submission)");
             }
             else
             {
@@ -977,12 +977,12 @@ public class SubsonicController(
                     PlayMethod = playMethod,
                     IsPaused = false,
                 });
-                logger.LogInformation("[Subfin-NG]scrobble: sent start+progress (now playing)");
+                logger.LogInformation("[Subfin-NG] scrobble: sent start+progress (now playing)");
             }
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "[Subfin-NG]scrobble: session reporting failed (non-fatal)");
+            logger.LogWarning(ex, "[Subfin-NG] scrobble: session reporting failed (non-fatal)");
         }
     }
 
@@ -1599,16 +1599,16 @@ public class SubsonicController(
 
         var needsTranscode = (targetFormat != null && targetFormat != "raw") || bitRate > 0 || timeOff > 0;
 
-        logger.LogInformation("[Subfin-NG]stream id={Id} format={Format} bitRate={BitRate} timeOff={TimeOff} needsTranscode={NeedsTranscode}",
+        logger.LogInformation("[Subfin-NG] stream id={Id} format={Format} bitRate={BitRate} timeOff={TimeOff} needsTranscode={NeedsTranscode}",
             id, targetFormat, bitRate, timeOff, needsTranscode);
 
         var apiKey = needsTranscode ? await GetOrCreatePluginApiKey() : null;
         if (needsTranscode && string.IsNullOrEmpty(apiKey))
-            logger.LogWarning("[Subfin-NG]Could not obtain plugin API key — serving direct");
+            logger.LogWarning("[Subfin-NG] Could not obtain plugin API key — serving direct");
         if (string.IsNullOrEmpty(apiKey))
         {
             RememberStreamedAs(user.Id, guid, PlayMethod.DirectPlay);
-            return PhysicalFile(item.Path, ItemMapper.AudioMimeType(item.Container), null, true);
+            return PhysicalFile(item.Path, ItemMapper.AudioMimeType(ItemMapper.AudioSuffix(item)), null, true);
         }
         RememberStreamedAs(user.Id, guid, PlayMethod.Transcode);
 
@@ -1625,7 +1625,7 @@ public class SubsonicController(
         // Loopback URL (incl. Jellyfin's base URL): the client-facing host may be a reverse proxy,
         // a mapped port or a name this server can't resolve.
         var url = $"{appHost.GetApiUrlForLocalAccess().TrimEnd('/')}/Audio/{guid:N}/stream.{container}?{qs}";
-        logger.LogInformation("[Subfin-NG]stream proxy → {Url}", url);
+        logger.LogInformation("[Subfin-NG] stream proxy → {Url}", url);
         var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.TryAddWithoutValidation("Authorization", $"MediaBrowser Token=\"{apiKey}\"");
 
@@ -1650,7 +1650,7 @@ public class SubsonicController(
     {
         if (!TryGetServableSong(auth, user, p, format, PermissionKind.EnableContentDownloading, out var item, out var err)) return err!;
 
-        return PhysicalFile(item.Path, ItemMapper.AudioMimeType(item.Container), Path.GetFileName(item.Path), true);
+        return PhysicalFile(item.Path, ItemMapper.AudioMimeType(ItemMapper.AudioSuffix(item)), Path.GetFileName(item.Path), true);
     }
 
     // ── getCoverArt / getAvatar ──────────────────────────────────────────────

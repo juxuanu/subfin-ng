@@ -29,6 +29,19 @@ public class ItemMapperTests
     }
 
     [Theory]
+    [InlineData("/music/a.m4a", "mov,mp4,m4a,3gp,3g2,mj2", "m4a", "audio/mp4")]  // Jellyfin's container for .m4a files
+    [InlineData("/music/a.MP3", "mp3", "mp3", "audio/mpeg")]
+    [InlineData("/music/a.flac", "flac", "flac", "audio/flac")]
+    [InlineData("/music/no-extension", "mov,mp4,m4a,3gp,3g2,mj2", "mov", "application/octet-stream")]
+    public void AudioSuffix_IsTheFileExtension(string path, string container, string suffix, string mimeType)
+    {
+        var song = new MediaBrowser.Controller.Entities.Audio.Audio { Path = path, Container = container };
+
+        Assert.Equal(suffix, ItemMapper.AudioSuffix(song));
+        Assert.Equal(mimeType, ItemMapper.AudioMimeType(ItemMapper.AudioSuffix(song)));
+    }
+
+    [Theory]
     [InlineData(10_000_000L, 1)]
     [InlineData(100_000_000L, 10)]
     [InlineData(0L, 0)]

@@ -232,6 +232,10 @@ if "Compilation" in albums:
            [x.get("artists") for x in comp_tracks])
     record("each song lists its album artists, linked to getArtists",
            all(x.get("albumArtists") == [{"id": va, "name": "Various Artists"}] for x in comp_tracks), [x.get("albumArtists") for x in comp_tracks])
+    # .m4a files: Jellyfin's container is ffmpeg's "mov,mp4,m4a,3gp,3g2,mj2", which apps don't recognise
+    types = {(x.get("suffix"), x.get("contentType"), x.get("transcodedSuffix")) for x in comp_tracks}
+    sent = requests.get(f"{API}/stream", params={**auth(), "id": comp_tracks[0]["id"]}, timeout=30).headers.get("Content-Type") if comp_tracks else None
+    record(".m4a songs have suffix m4a and type audio/mp4, as they're streamed", types == {("m4a", "audio/mp4", "m4a")} and sent == "audio/mp4", (types, sent))
     listed = call("getAlbumList2", {"type": "alphabeticalByName", "size": 50}, check_schema=False, label="album list artists").get("albumList2", {}).get("album", [])
     record("album lists carry each album's artists", all(x.get("artists") and all(a["id"] in artist_ids for a in x["artists"]) for x in listed),
            [(x.get("name"), x.get("artists")) for x in listed])
