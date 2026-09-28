@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/juxuanu/subfin-ng/main/logo.png",
     "versions": [
       {
+        "version": "12.1.11.0",
+        "changelog": "- feat: bookmarks (createBookmark, getBookmarks, deleteBookmark), kept by the plugin\n- fix: stream sends the file itself when it's in the format and within the bitrate asked for\n- fix: songs report their file extension as suffix, m4a as audio/mp4\n- fix cache key warning",
+        "targetAbi": "12.1.0.0",
+        "sourceUrl": "https://github.com/juxuanu/subfin-ng/releases/download/v12.1.11.0/jellyfin-plugin-subfin-ng_12.1.11.0.zip",
+        "checksum": "3b50e3b47cbbeb2c43c058c4ef43d5ca",
+        "timestamp": "2026-09-28T20:26:44Z"
+      },
+      {
         "version": "12.1.10.0",
         "changelog": "- rename to subfin-ng",
         "targetAbi": "12.1.0.0",
