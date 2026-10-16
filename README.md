@@ -43,6 +43,8 @@ Jellyfin then offers new versions as updates, like for any other plugin.
 
 That's all. Use HTTPS if the app connects from outside your home network.
 
+Some apps, such as UAPP, put every song of a playlist in the request address. Jellyfin turns away addresses over 8 KB, about 200 songs, so Subfin-NG raises its limit to 1 MB, as Navidrome allows. A reverse proxy in front of Jellyfin has its own limit: with nginx, add `large_client_header_buffers 4 1m;`.
+
 ## Passwords
 
 The OpenSubsonic password works with token login, the way Navidrome prefers apps to sign in and the default in most apps, and with plain password login. Token login needs the server to know the password, so Subfin-NG stores it encrypted.

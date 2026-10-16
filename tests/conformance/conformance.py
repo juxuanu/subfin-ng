@@ -471,6 +471,14 @@ if song_ids and "Album One" in albums:
         r = call("getPlaylists", check_schema=False)
         record("playlist gone after delete", not (r or {}).get("playlists", {}).get("playlist"), r)
 
+    # clients like UAPP send a whole playlist in the query string, past Kestrel's default 8 KB
+    many = [song_ids[i % len(song_ids)] for i in range(500)]
+    r = call("createPlaylist", [("name", "Long URL")] + [("songId", s) for s in many], check_schema=False, label="createPlaylist with 500 songs")
+    record("createPlaylist with 500 songs in the query string (~20 KB URL)", ok(r) and (r or {}).get("playlist", {}).get("songCount") == 500,
+           {k: v for k, v in ((r or {}).get("playlist") or r or {}).items() if k != "entry"})
+    if (r or {}).get("playlist", {}).get("id"):
+        call("deletePlaylist", {"id": r["playlist"]["id"]}, check_schema=False, label="long URL cleanup")
+
     record("savePlayQueue", ok(call("savePlayQueue", [("id", song_ids[0]), ("id", song_ids[1]), ("current", song_ids[1]), ("position", "1500")])))
     r = call("getPlayQueue")
     q = (r or {}).get("playQueue", {})
