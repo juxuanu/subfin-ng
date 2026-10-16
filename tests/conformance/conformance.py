@@ -927,9 +927,9 @@ if song_ids:
         record("createPlaylist with playlistId replaces the playlist's songs", got == [song_ids[2], song_ids[0]], got)
         call("updatePlaylist", {"playlistId": pl, "songIdToAdd": song_ids[2]}, check_schema=False, label="sem add dup")
         got = [x["id"] for x in call("getPlaylist", {"id": pl}, check_schema=False, label="sem after dup").get("playlist", {}).get("entry", [])]
-        dup = tuple(int(x) for x in JF_VERSION.split(".")[:2]) >= (12, 1)
+        dup = tuple(int(x) for x in JF_VERSION.split(".")[:2]) >= (12, 0)
         want = [song_ids[2], song_ids[0], song_ids[2]] if dup else [song_ids[2], song_ids[0]]
-        record(f"duplicate playlist entries {'kept (Jellyfin 12.1+)' if dup else 'dropped (Jellyfin 10.11 has none)'}", got == want, got)
+        record(f"duplicate playlist entries {'kept (Jellyfin 12+)' if dup else 'dropped (Jellyfin 10.11 has none)'}", got == want, got)
         call("deletePlaylist", {"id": pl}, check_schema=False, label="sem cleanup")
 
 # ── shares across users ─────────────────────────────────────────────────────

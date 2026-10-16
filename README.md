@@ -4,7 +4,7 @@
 
 Subfin-NG lets Subsonic-compatible music apps play your Jellyfin music library. It adds an [OpenSubsonic](https://opensubsonic.netlify.app/) API to Jellyfin itself, so there's no second server to run and no second set of accounts: apps sign in with Jellyfin usernames, and Jellyfin's library access, parental ratings and account rules apply. Everything apps see comes from Jellyfin, including artist biographies, album notes, images and similar artists.
 
-Requires Jellyfin **12.1** or later.
+Requires Jellyfin **12.0** or later.
 
 ## Install
 

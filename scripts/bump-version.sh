@@ -40,7 +40,8 @@ SERVER_VERSION="${PLUGIN_MAJOR}.${PLUGIN_MINOR}.0"
 TARGET_ABI=$(jq -r '.targetAbi' "$META_SRC")
 ABI_MAJOR=$(echo "$TARGET_ABI" | cut -d. -f1)
 ABI_MINOR=$(echo "$TARGET_ABI" | cut -d. -f2)
-if [ "$JF_MAJOR" != "$ABI_MAJOR" ] || [ "$JF_MINOR" != "$ABI_MINOR" ]; then
+# targetAbi is the oldest Jellyfin the plugin runs on, so it may be below the version's (12.0 since 12.1.13.0)
+if [ "$ABI_MAJOR" -gt "$JF_MAJOR" ] || { [ "$ABI_MAJOR" -eq "$JF_MAJOR" ] && [ "$ABI_MINOR" -gt "$JF_MINOR" ]; }; then
     echo "WARNING: new version implies Jellyfin ${JF_MAJOR}.${JF_MINOR}.x but targetAbi is ${TARGET_ABI}" >&2
     echo "  Update targetAbi in meta.json manually if targeting a different Jellyfin version." >&2
 fi
