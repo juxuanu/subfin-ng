@@ -928,9 +928,11 @@ public class SubsonicController(
     }
 
     /// <summary>
-    /// Live playback through Jellyfin's session manager: "now playing", and when finished Jellyfin
-    /// counts the play, stamps it and notifies scrobbler plugins. It is the only writer of that play
-    /// (writing user data here as well would race with it and lose one of the updates).
+    /// Live playback through Jellyfin's session manager. "Now playing" only shows the song in the app's
+    /// session: apps also send it for a song they just loaded or resumed (Tempus does when it opens), and
+    /// a Jellyfin playback start counts a play. A finished song counts one, as in Navidrome: Jellyfin
+    /// stamps it and notifies scrobbler plugins, and is the only writer of that play (writing user data
+    /// here as well would race with it and lose one of the updates).
     /// </summary>
     private async Task ReportPlaybackAsync(AuthResult auth, User user, Audio item, bool finished)
     {
@@ -940,54 +942,55 @@ public class SubsonicController(
             var (deviceId, clientName) = ClientDevice(auth);
             var clientVersion = _query.First("v") is { Length: > 0 } cv ? cv : "1.0.0";
             var session = await sessions.LogSessionActivity(clientName, clientVersion, deviceId, clientName, remoteIp, user);
-            // Every report carries it: left out, it reads as 0, which is Transcode
-            var playMethod = StreamedAs(user.Id, item.Id);
 
-            // Jellyfin counts a play when it starts. Clients report "now playing" when a song starts and
-            // submit it when it ends: a song this session already started is only stopped, not started again.
-            if (session.NowPlayingItem?.Id != item.Id)
+            if (!finished)
             {
-                await sessions.OnPlaybackStart(new PlaybackStartInfo
-                {
-                    ItemId = item.Id,
-                    SessionId = session.Id,
-                    PositionTicks = 0L,
-                    PlayMethod = playMethod,
-                    IsPaused = false,
-                    CanSeek = true,
-                });
+                // Jellyfin ends it after 5 minutes without news, so a song that never plays doesn't linger
+                await ShowNowPlaying(session.Id, user, item.Id);
+                logger.LogInformation("[Subfin-NG] scrobble: now playing");
+                return;
             }
 
-            if (finished)
+            // Jellyfin counts a play when playback starts: started and stopped at its end, it's one play
+            var playing = session.NowPlayingItem;
+            await sessions.OnPlaybackStart(new PlaybackStartInfo
             {
-                // Stopped at the end: played to completion.
-                await sessions.OnPlaybackStopped(new PlaybackStopInfo
-                {
-                    ItemId = item.Id,
-                    SessionId = session.Id,
-                    PositionTicks = item.RunTimeTicks,
-                    Failed = false,
-                });
-                logger.LogInformation("[Subfin-NG] scrobble: sent start+stop (submission)");
-            }
-            else
+                ItemId = item.Id,
+                SessionId = session.Id,
+                PositionTicks = 0L,
+                PlayMethod = StreamedAs(user.Id, item.Id),
+                IsPaused = false,
+                CanSeek = true,
+            });
+            await sessions.OnPlaybackStopped(new PlaybackStopInfo
             {
-                _ = sessions.OnPlaybackProgress(new PlaybackProgressInfo
-                {
-                    ItemId = item.Id,
-                    SessionId = session.Id,
-                    PositionTicks = 0L,
-                    PlayMethod = playMethod,
-                    IsPaused = false,
-                });
-                logger.LogInformation("[Subfin-NG] scrobble: sent start+progress (now playing)");
-            }
+                ItemId = item.Id,
+                SessionId = session.Id,
+                PositionTicks = item.RunTimeTicks,
+                Failed = false,
+            });
+            // An app may announce the next song before submitting this one: it's still the one playing
+            if (playing != null && playing.Id != item.Id)
+                await ShowNowPlaying(session.Id, user, playing.Id);
+            logger.LogInformation("[Subfin-NG] scrobble: counted a play (submission)");
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "[Subfin-NG] scrobble: session reporting failed (non-fatal)");
         }
     }
+
+    /// <summary>The song as playing in the session, without counting a play or touching the user's data.</summary>
+    private Task ShowNowPlaying(string sessionId, User user, Guid itemId) =>
+        sessions.OnPlaybackProgress(new PlaybackProgressInfo
+        {
+            ItemId = itemId,
+            SessionId = sessionId,
+            // Every report carries it: left out, it reads as 0, which is Transcode
+            PlayMethod = StreamedAs(user.Id, itemId),
+            IsPaused = false,
+            // and no position, which Jellyfin would write to the user's data
+        });
 
     // ── getNowPlaying ────────────────────────────────────────────────────────
 

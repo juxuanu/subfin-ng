@@ -451,6 +451,12 @@ if song_ids and "Album One" in albums:
         call("scrobble", {"id": comp_songs[1], "submission": "false"}, check_schema=False, label="now playing transcoded")
         got = play_method(comp_songs[1])
         record("a transcoded song shows as transcoding in Jellyfin", got == ["Transcode"], got)
+        # Apps also say "now playing" for a song they only loaded (Tempus, when it opens) or resumed
+        record("now playing alone counts no play", play_count(comp_songs[1]) == 0, play_count(comp_songs[1]))
+        call("scrobble", {"id": comp_songs[0], "submission": "true"}, check_schema=False, label="finished after the next one started")
+        got = (play_count(comp_songs[0]), play_method(comp_songs[1]))
+        record("a song submitted after the next one started counts a play, and the next one still shows as playing",
+               got == (2, ["Transcode"]), got)
     else:
         record("compilation has 2 songs for the playback checks", False, comp_songs)
 
